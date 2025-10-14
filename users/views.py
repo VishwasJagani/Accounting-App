@@ -18,6 +18,7 @@ from users import serializer as users_serializer
 from users import utils as users_utils
 from base_files.base_permission import IsAuthenticated
 from base_files.base_pagination import CustomPagination
+from base_files.base_task import send_mail
 
 
 class RoleList(generics.ListAPIView):
@@ -526,6 +527,39 @@ class SendOTPView(APIView):
     View for sending OTP to a user's registered email address.
     """
 
+    @swagger_auto_schema(
+        operation_summary="Send OTP",
+        operation_description="Send OTP to the user's email address.",
+        tags=['Auth'],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'email': openapi.Schema(type=openapi.TYPE_STRING, description='User email address'),
+                'otp_type': openapi.Schema(type=openapi.TYPE_STRING, description='Type of OTP request (e.g., reset_password, verify_email)')
+            },
+            required=['email', 'otp_type']
+        ),
+        responses={
+            200: openapi.Response(
+                description='OTP has been successfully sent to the user\'s email.',
+                examples={
+                    'application/json': {
+                        'success': True,
+                        'message': 'An Email has been Sent.'
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description='Bad request due to missing parameters or user-related issues.',
+                examples={
+                    'application/json': {
+                        'success': False,
+                        'message': 'Email is required.'
+                    }
+                }
+            )
+        }
+    )
     def post(self, request):
         try:
             data = request.data
@@ -538,31 +572,32 @@ class SendOTPView(APIView):
             if users_utils.is_required(otp_type):
                 return Response({"success": False, "message": "OTP Type is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-            if otp_type == "reset_password" or otp_type == "verify_email":
+            if otp_type == "reset_password":
                 if not users_models.User.objects.filter(email=email, is_deleted=False, is_active=False).exists():
                     return Response({"success": False, "message": "User With This Email Not Exist."}, status=status.HTTP_400_BAD_REQUEST)
 
             if otp_type == "verify_email":
-                user = users_models.User.objects.get(
-                    email=email, is_deleted=False, is_active=False)
-                if user.is_email_verified:
-                    return Response({"success": False, "message": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+                user = users_models.User.objects.filter(
+                    email=email, is_deleted=False, is_active=False).first()
+                if user:
+                    if user.is_email_verified:
+                        return Response({"success": False, "message": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+            users_models.Otp.objects.filter(
+                user=email, otp_type=otp_type).delete()
 
             otp_code = users_models.Otp.objects.create(
                 user=email, otp_type=otp_type)
 
-            data = {
-                "user": otp_code.user,
+            send_mail({
                 "otp_code": otp_code.otp,
                 "otp_type": otp_code.otp_type,
-                "expiry_time": otp_code.expiry_time.strftime('%Y-%m-%d %H:%M:%S')
-            }
+                "email": email,
+                "subject": "OTP Verification",
+                "template_name": "email_verification.html",
+            })
 
-            if otp_code:
-                return Response({"success": True, "message": "OTP Created successfully.", "data": data}, status=status.HTTP_200_OK)
-
-            else:
-                return Response({"success": False, "message": "Failed to create OTP."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": True, "message": "An Email has been Sent."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -573,12 +608,93 @@ class VerifyOTPView(APIView):
     View for verifying OTP sent to a user's registered email address.
     """
 
+    @swagger_auto_schema(
+        operation_summary="Verify OTP",
+        operation_description="Verify the OTP sent to the user's registered email address.",
+        tags=['Auth'],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'email': openapi.Schema(type=openapi.TYPE_STRING, description='User email address'),
+                'otp_code': openapi.Schema(type=openapi.TYPE_STRING, description='The OTP code sent to the user'),
+                'otp_type': openapi.Schema(type=openapi.TYPE_STRING, description='The type of OTP request (e.g., reset_password, verify_email)')
+            },
+            required=['email', 'otp_code', 'otp_type']
+        ),
+        responses={
+            200: openapi.Response(
+                description='OTP successfully verified.',
+                examples={
+                    'application/json': {
+                        'success': True,
+                        # Example for reset_password
+                        'message': 'OTP verified successfully. You can now reset your password.'
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description='Bad request due to missing parameters or invalid OTP.',
+                examples={
+                    'application/json': {
+                        'success': False,
+                        'message': 'Email is required.'  # Example for missing email
+                    },
+                    'application/json': {
+                        'success': False,
+                        'message': 'OTP has expired. Please request new otp'  # Example for expired OTP
+                    },
+                    'application/json': {
+                        'success': False,
+                        'message': 'Invalid OTP.'  # Example for invalid OTP
+                    }
+                }
+            )
+        }
+    )
     def post(self, request):
         try:
             data = request.data
             email = data.get('email')
             otp_code = data.get('otp_code')
             otp_type = data.get('otp_type')
+
+            if users_utils.is_required(email):
+                return Response({"success": False, "message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(otp_code):
+                return Response({"success": False, "message": "OTP Code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(otp_type):
+                return Response({"success": False, "message": "OTP Type is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            otp = users_models.Otp.objects.filter(
+                user=email, otp_type=otp_type, otp=otp_code).first()
+
+            if otp:
+                if otp.expiry_time < timezone.now():
+                    otp.delete()
+                    return Response({"success": False, "message": "OTP has expired. Please request new otp"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if otp:
+                if otp_type == "reset_password":
+                    otp.delete()
+                    return Response({"success": True, "message": "OTP verified successfully. You can now reset your password."}, status=status.HTTP_200_OK)
+                if otp_type == "verify_email":
+                    user = users_models.User.objects.filter(
+                        email=email, is_deleted=False, is_active=True).first()
+                    otp.delete()
+                    if user:
+                        user.is_email_verified = True
+                        user.save()
+                        return Response({"success": True, "message": "Email verified successfully."}, status=status.HTTP_200_OK)
+                    else:
+                        return Response({"success": False, "message": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+                else:
+                    return Response({"success": False, "message": "Invalid OTP Type."}, status=status.HTTP_400_BAD_REQUEST)
+
+            else:
+                return Response({"success": False, "message": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -665,6 +781,7 @@ class AddClientView(APIView):
                 'bank_details': openapi.Schema(type=openapi.TYPE_STRING, description="Bank details", default=""),
                 'notes': openapi.Schema(type=openapi.TYPE_STRING, description="Additional notes", default=""),
                 'category': openapi.Schema(type=openapi.TYPE_STRING, description="Client category", default=""),
+                'user_type': openapi.Schema(type=openapi.TYPE_STRING, description="User Type Client / Supplier", default=""),
             }
         ),
         responses={
@@ -986,6 +1103,91 @@ class ClientDetailView(APIView):
                 client_id=client_id, user=user, is_deleted=False)
             client.delete()
             return Response({"success": True, "message": "Client deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddRemoveFavoriteClient(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Add or Remove a client from favorites",
+        operation_description="Add or remove a client from the authenticated user's favorite clients list.",
+        tags=['Client / Supplier'],
+        manual_parameters=[
+            openapi.Parameter(
+                'is_favorite', openapi.IN_QUERY,
+                description="Set the client's favorite status (true/false).",
+                type=openapi.TYPE_STRING,
+                enum=['true', 'false'],
+                default='false'
+            ),
+            openapi.Parameter(
+                'client_id', openapi.IN_PATH,
+                description="The client ID to update the favorite status for.",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Favorite status updated successfully.",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Favorite status updated successfully.",
+                        "data": {
+                            "client_id": 123,
+                            "is_favorite": True
+                        }
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request, missing parameters or invalid input.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Client ID is required."
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Client not found.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Client not found."
+                    }
+                }
+            )
+        }
+    )
+    def get(self, request, client_id):
+        try:
+            user = request.user
+            is_favorite = request.query_params.get('is_favorite', 'false')
+
+            if users_utils.is_required(client_id):
+                return Response({"success": False, "message": "Client ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(is_favorite):
+                return Response({"success": False, "message": "is_favorite parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            client_obj = users_models.ClientModel.objects.filter(
+                client_id=client_id, user=user, is_deleted=False).first()
+
+            if not client_obj:
+                return Response({"success": False, "message": "Client not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            if is_favorite.lower() == 'true':
+                client_obj.is_favorite = True
+            else:
+                client_obj.is_favorite = False
+
+            client_obj.save()
+            return Response({"success": True, "message": "Favorite status updated successfully.", "data": {"client_id": client_obj.client_id, "is_favorite": client_obj.is_favorite}}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

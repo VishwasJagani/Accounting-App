@@ -453,7 +453,10 @@ class ProductListView(generics.ListAPIView):
     )
     def get(self, request, *args, **kwargs):
         try:
+            category = request.query_params.get('category', None)
             queryset = self.get_queryset(request)
+            if category:
+                queryset = queryset.filter(category=category)
             serializer = self.serializer_class(queryset, many=True)
             return Response({"success": True, "message": "Product Data Fetched", "data": serializer.data}, status=status.HTTP_200_OK)
         except Exception as e:

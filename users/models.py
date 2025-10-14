@@ -1,8 +1,9 @@
 # Django
 import os
-from django.db import models
 from random import randint
-from datetime import datetime, timedelta
+from django.db import models
+from datetime import timedelta
+from django.utils import timezone
 
 # Local
 from base_files.base_models import BaseModel
@@ -80,10 +81,10 @@ class Otp(BaseModel):
     def save(self, *args, **kwargs):
         try:
             if not self.otp:
-                self.otp = str(randint(100000, 999999))
+                self.otp = str(randint(100000, 999999))  # Generate a random 6-digit OTP
             if not self.expiry_time:
-                self.expiry_time = datetime.now() + timedelta(minutes=5)
-        except Exception:
+                self.expiry_time = timezone.now() + timedelta(minutes=1)  # Set expiry time in UTC
+        except Exception as e:
             pass
         super().save(*args, **kwargs)
 
@@ -112,6 +113,9 @@ class ClientModel(BaseModel):
     bank_details = models.CharField(max_length=100, blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
     category = models.CharField(max_length=20, blank=True, null=True)
+    user_type = models.CharField(
+        max_length=50, blank=True, null=True, default="client")
+    is_favorite = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:

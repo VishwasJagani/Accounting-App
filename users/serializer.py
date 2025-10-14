@@ -43,12 +43,12 @@ class UserSerializer(serializers.ModelSerializer):
 class ClientListSerializer(serializers.ModelSerializer):
     created_at = serializers.SerializerMethodField()
     updated_at = serializers.SerializerMethodField()
-    user_fullname = serializers.ReadOnlyField(source='user.fullname')
+    # user_fullname = serializers.ReadOnlyField(source='user.fullname')
 
     class Meta:
         model = users_models.ClientModel
-        fields = ['client_id', 'user', 'user_fullname', 'client_name',
-                  'email', 'phone_number', 'created_at', 'updated_at']
+        fields = ['client_id', 'user', 'client_name',
+                  'email', 'phone_number', 'user_type', 'is_favorite', 'created_at', 'updated_at']
 
     def get_created_at(self, obj):
         if obj.created_at:
@@ -69,7 +69,7 @@ class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = users_models.ClientModel
         fields = ['client_id', 'user', 'user_fullname', 'client_name', 'email', 'phone_number', 'contact_person', 'shipping_address',
-                  'billing_address', 'city', 'state', 'country', 'zip_code', 'tax_number', 'gst_type', 'pan_number', 'payment_term', 'credit_limit', 'preferred_payment_method', 'bank_details', 'notes', 'category', 'created_at', 'updated_at']
+                  'billing_address', 'city', 'state', 'country', 'zip_code', 'tax_number', 'gst_type', 'pan_number', 'payment_term', 'credit_limit', 'preferred_payment_method', 'bank_details', 'notes', 'category', 'user_type', 'created_at', 'updated_at']
 
     def get_created_at(self, obj):
         if obj.created_at:
