@@ -122,3 +122,6 @@ class ClientModel(BaseModel):
         verbose_name = "Client"
         verbose_name_plural = "Clients"
         db_table = "Clients"
+
+    def __str__(self):
+        return self.client_name

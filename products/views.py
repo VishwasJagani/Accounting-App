@@ -745,3 +745,602 @@ class ProductDetailsView(APIView):
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PurchaseOrderListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = products_serializer.PurchaseOrderSerializer
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        user = self.request.user
+        order_data = products_models.PurchaseOrders.objects.filter(
+            user=user, is_deleted=False).order_by('-created_at')
+        response_data = []
+
+        for order in order_data:
+            items = products_models.OrderItems.objects.filter(
+                order=order)
+
+            total_items = items.count()
+
+            response_data.append({
+                'order_id': order.order_id,
+                'client': order.client.client_name,
+                'order_number': order.order_number,
+                'total_items': total_items,
+                'total_price': order.total,
+                'order_status': order.order_status
+            })
+
+        return response_data
+
+    @swagger_auto_schema(
+        operation_summary="Get Purchase Order List",
+        operation_description="Retrieve a list of purchase orders for the authenticated user that are not deleted.",
+        tags=["Purchase Orders"],
+        responses={
+            200: openapi.Response(
+                description="Successfully retrieved the list of purchase orders",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase orders fetched successfully"),
+                        "count": openapi.Schema(type=openapi.TYPE_INTEGER, example=25),
+                        "next": openapi.Schema(type=openapi.FORMAT_URI, example="http://api.example.com/orders?page=2"),
+                        "previous": openapi.Schema(type=openapi.FORMAT_URI, example=None),
+                        "results": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    "order_id": openapi.Schema(type=openapi.TYPE_STRING, example="PO-123456"),
+                                    "client": openapi.Schema(type=openapi.TYPE_STRING, example="Acme Corp"),
+                                    "order_number": openapi.Schema(type=openapi.TYPE_STRING, example="ORD-78910"),
+                                    "total_items": openapi.Schema(type=openapi.TYPE_INTEGER, example=5),
+                                    "total_price": openapi.Schema(type=openapi.TYPE_STRING, example="499.99"),
+                                    "order_status": openapi.Schema(type=openapi.TYPE_STRING, example="Completed"),
+                                }
+                            )
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="An error occurred"),
+                    }
+                )
+            )
+        }
+    )
+    def get(self, request):
+        try:
+            response_data = self.get_queryset()
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(
+                response_data, request)
+
+            return paginator.get_paginated_response(result_page)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CreatePurchaseOrderView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = products_serializer.PurchaseOrderSerializer
+
+    @swagger_auto_schema(
+        operation_summary="Create Purchase Order",
+        operation_description="Creates a new purchase order along with its items.",
+        tags=["Purchase Orders"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["client", "order_date", "expected_delivery_date",
+                      "subtotal", "tax", "total", "items"],
+            properties={
+                "client": openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                "order_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-15"),
+                "expected_delivery_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-20"),
+                "subtotal": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=1000.0),
+                "tax": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=10.0),
+                "total": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=1200.0),
+                "items": openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        required=["product_id", "qty", "tax"],
+                        properties={
+                            "product_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                            "qty": openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                            "tax": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=10.0)
+                        }
+                    )
+                )
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Purchase Order Created Successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase Order Created Successfully"),
+                        "data": openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "order_id": openapi.Schema(type=openapi.TYPE_STRING, example="PO-1001"),
+                                "client": openapi.Schema(type=openapi.TYPE_STRING, example="Acme Corp"),
+                                "order_number": openapi.Schema(type=openapi.TYPE_STRING, example="ORD-20251015"),
+                                "order_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-15"),
+                                "expected_delivery_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-20"),
+                                "subtotal": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=1000.0),
+                                "tax": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=10.0),
+                                "total": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=1200.0),
+                                "order_status": openapi.Schema(type=openapi.TYPE_STRING, example="Pending"),
+                                "order_items": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "order": openapi.Schema(type=openapi.TYPE_STRING, example="PO-1001"),
+                                            "product": openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                                            "qty": openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                            "price": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=1000.0),
+                                            "tax": openapi.Schema(type=openapi.TYPE_NUMBER, format="float", example=10.0)
+                                        }
+                                    )
+                                )
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Bad Request - Validation or internal error",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Client ID is required")
+                    }
+                )
+            )
+        }
+    )
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            client = data.get('client')
+            items = data.get('items')
+
+            if users_utils.is_required(client):
+                return Response({"success": False, "message": "Client ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if items:
+                for item in items:
+                    if users_utils.is_required(item.get('qty')):
+                        return Response({"success": False, "message": "Quantity is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not products_models.Products.objects.filter(product_id=item.get('product_id'), user=user, is_deleted=False).exists():
+                        return Response({"success": False, "message": "Invalid Product ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['user'] = user.user_id
+            serializer = self.serializer_class(data=data)
+
+            if serializer.is_valid():
+                order_instance = serializer.save()
+
+                if items:
+                    item_list = []
+                    for item in items:
+                        product = products_models.Products.objects.get(
+                            product_id=item.get('product_id'), user=user, is_deleted=False)
+
+                        item_data = {
+                            'order': order_instance.order_id,
+                            'product': product.product_id,
+                            'qty': item.get('qty'),
+                            'price': product.selling_price,
+                            'tax': item.get('tax')
+                        }
+
+                        items_serializer = products_serializer.OrderItemsSeializer(
+                            data=item_data)
+                        if items_serializer.is_valid():
+                            items_serializer.save()
+                            item_list.append(items_serializer.data)
+                        else:
+                            return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                response_data = self.serializer_class(order_instance).data
+                response_data['order_items'] = item_list
+
+                return Response({"success": True, "message": "Purchase Order Created Successfully", "data": response_data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PurchaseOrderDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Get Purchase Order Detail",
+        operation_description="Retrieve the details of a specific purchase order by ID for the authenticated user.",
+        tags=["Purchase Orders"],
+        responses={
+            200: openapi.Response(
+                description="Successfully retrieved the purchase order details",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase Order Details Fetched"),
+                        "data": openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "order_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=11),
+                                "order_number": openapi.Schema(type=openapi.TYPE_STRING, example="AB-2025-01"),
+                                "order_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-15"),
+                                "expected_delivery_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-20"),
+                                "subtotal": openapi.Schema(type=openapi.TYPE_STRING, example="10000.00"),
+                                "tax": openapi.Schema(type=openapi.TYPE_STRING, example="100.00"),
+                                "total": openapi.Schema(type=openapi.TYPE_STRING, example="12000.00"),
+                                "notes": openapi.Schema(type=openapi.TYPE_STRING, example=""),
+                                "order_status": openapi.Schema(type=openapi.TYPE_STRING, example="Pending"),
+                                "client": openapi.Schema(
+                                    type=openapi.TYPE_OBJECT,
+                                    properties={
+                                        "client_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                                        "client_name": openapi.Schema(type=openapi.TYPE_STRING, example="Demo"),
+                                        "email": openapi.Schema(type=openapi.TYPE_STRING, example="demo@gmail.com"),
+                                        "phone_number": openapi.Schema(type=openapi.TYPE_STRING, example="12345678"),
+                                    }
+                                ),
+                                "order_items": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "item_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=6),
+                                            "product": openapi.Schema(
+                                                type=openapi.TYPE_OBJECT,
+                                                properties={
+                                                    "product_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                                                    "user": openapi.Schema(type=openapi.TYPE_INTEGER, example=6),
+                                                    "user_name": openapi.Schema(type=openapi.TYPE_STRING, example="ABC Patel"),
+                                                    "name": openapi.Schema(type=openapi.TYPE_STRING, example="Switch"),
+                                                    "item_sku": openapi.Schema(type=openapi.TYPE_STRING, example="sw-100q1"),
+                                                    "description": openapi.Schema(type=openapi.TYPE_STRING, example="affsdfcd"),
+                                                    "category": openapi.Schema(type=openapi.TYPE_INTEGER, example=3),
+                                                    "category_name": openapi.Schema(type=openapi.TYPE_STRING, example="electronics"),
+                                                    "stock_level": openapi.Schema(type=openapi.TYPE_INTEGER, example=10),
+                                                    "reorder_point": openapi.Schema(type=openapi.TYPE_INTEGER, example=20),
+                                                    "selling_price": openapi.Schema(type=openapi.TYPE_STRING, example="100.00"),
+                                                    "cost_price": openapi.Schema(type=openapi.TYPE_STRING, example="50.00"),
+                                                    "tax": openapi.Schema(type=openapi.TYPE_STRING, example="GST"),
+                                                    "discount_percentage": openapi.Schema(type=openapi.TYPE_STRING, example="5.00"),
+                                                    "product_image": openapi.Schema(type=openapi.TYPE_STRING, example="/media/product_images/photo2.jpg"),
+                                                    "is_active": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                                                }
+                                            ),
+                                            "qty": openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                                            "price": openapi.Schema(type=openapi.TYPE_STRING, example="100.00"),
+                                            "tax": openapi.Schema(type=openapi.TYPE_STRING, example="100.00"),
+                                        }
+                                    )
+                                )
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Order ID is required or other error"),
+                    }
+                )
+            ),
+            404: openapi.Response(
+                description="Purchase order not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="No purchase order found for the given ID"),
+                    }
+                )
+            )
+        }
+    )
+    def get(self, request, order_id):
+        try:
+            user = request.user
+
+            if users_utils.is_required(order_id):
+                return Response({
+                    "success": False,
+                    "message": "Order ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            purchase_order = products_models.PurchaseOrders.objects.prefetch_related(
+                'order_items'
+            ).filter(order_id=order_id, user=user, is_deleted=False).first()
+
+            if not purchase_order:
+                return Response({
+                    "success": False,
+                    "message": "No purchase order found for the given ID"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = products_serializer.PurchaseOrderDetailsSerializer(
+                purchase_order)
+            return Response({
+                "success": True,
+                "message": "Purchase Order Details Fetched",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Update Purchase Order",
+        operation_description="Update an existing purchase order and its order items for the authenticated user.",
+        tags=["Purchase Orders"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["order_date", "expected_delivery_date",
+                      "subtotal", "tax", "total", "items"],
+            properties={
+                "order_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-15"),
+                "expected_delivery_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-20"),
+                "subtotal": openapi.Schema(type=openapi.TYPE_NUMBER, example=10000),
+                "tax": openapi.Schema(type=openapi.TYPE_NUMBER, example=100),
+                "total": openapi.Schema(type=openapi.TYPE_NUMBER, example=12000),
+                "items": openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        required=["product_id", "qty"],
+                        properties={
+                            "product_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                            "qty": openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                            "tax": openapi.Schema(type=openapi.TYPE_NUMBER, example=100),
+                        }
+                    )
+                )
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Purchase Order updated successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase Order updated successfully"),
+                        "data": openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "order_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=11),
+                                "order_number": openapi.Schema(type=openapi.TYPE_STRING, example="PO-2025-001"),
+                                "order_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-15"),
+                                "expected_delivery_date": openapi.Schema(type=openapi.TYPE_STRING, format="date", example="2025-10-20"),
+                                "subtotal": openapi.Schema(type=openapi.TYPE_NUMBER, example=10000),
+                                "tax": openapi.Schema(type=openapi.TYPE_NUMBER, example=100),
+                                "total": openapi.Schema(type=openapi.TYPE_NUMBER, example=12000),
+                                "notes": openapi.Schema(type=openapi.TYPE_STRING, example="Urgent delivery"),
+                                "order_status": openapi.Schema(type=openapi.TYPE_STRING, example="Pending"),
+                                "order_items": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "product": openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                                            "qty": openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                                            "price": openapi.Schema(type=openapi.TYPE_NUMBER, example=100.00),
+                                            "tax": openapi.Schema(type=openapi.TYPE_NUMBER, example=100),
+                                        }
+                                    )
+                                )
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Invalid input or bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Quantity is required."),
+                    }
+                )
+            ),
+            404: openapi.Response(
+                description="Purchase order not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase order not found."),
+                    }
+                )
+            )
+        }
+    )
+    def put(self, request, order_id):
+        try:
+            user = request.user
+            data = request.data
+            items = data.get('items')
+
+            if users_utils.is_required(order_id):
+                return Response({
+                    "success": False,
+                    "message": "Order ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if items:
+                for item in items:
+                    if users_utils.is_required(item.get('qty')):
+                        return Response({"success": False, "message": "Quantity is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not products_models.Products.objects.filter(product_id=item.get('product_id'), user=user, is_deleted=False).exists():
+                        return Response({"success": False, "message": "Invalid Product ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the purchase order
+            purchase_order = products_models.PurchaseOrders.objects.filter(
+                order_id=order_id, user=user, is_deleted=False).first()
+
+            if not purchase_order:
+                return Response({"success": False, "message": "Purchase order not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Update purchase order fields
+            serializer = products_serializer.PurchaseOrderSerializer(
+                purchase_order, data=data, partial=True)
+
+            if serializer.is_valid():
+                order_data = serializer.save()
+
+                if items:
+                    for item in items:
+                        product_id = item.get('product_id')
+                        qty = item.get('qty')
+                        tax = item.get('tax', 0)
+
+                        product = products_models.Products.objects.get(
+                            product_id=product_id, user=user, is_deleted=False)
+
+                        existing_item = products_models.OrderItems.objects.filter(
+                            order=order_data, product=product).first()
+
+                        if existing_item:
+                            if existing_item.qty != qty or existing_item.tax != tax:
+                                existing_item.qty = qty
+                                existing_item.tax = tax
+                                existing_item.price = product.selling_price
+                                existing_item.save()
+                        else:
+                            item_data = {
+                                'order': order_data.order_id,
+                                'product': product.product_id,
+                                'qty': qty,
+                                'price': product.selling_price,
+                                'tax': tax
+                            }
+
+                            items_serializer = products_serializer.OrderItemsSeializer(
+                                data=item_data)
+                            if items_serializer.is_valid():
+                                items_serializer.save()
+                            else:
+                                return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                order_items = products_models.OrderItems.objects.filter(
+                    order=order_data)
+                order_items_serializer = products_serializer.OrderItemsSeializer(
+                    order_items, many=True).data
+
+                response_data = products_serializer.PurchaseOrderSerializer(
+                    order_data).data
+                response_data['order_items'] = order_items_serializer
+
+                return Response({
+                    "success": True,
+                    "message": "Purchase Order updated successfully",
+                    "data": response_data
+                }, status=status.HTTP_200_OK)
+
+            else:
+                return Response({"success": False, "error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Delete Purchase Order",
+        operation_description="Delete a specific purchase order and all its associated items for the authenticated user.",
+        tags=["Purchase Orders"],
+        responses={
+            200: openapi.Response(
+                description="Purchase order deleted successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase Order Deleted"),
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Bad request (missing or invalid order ID)",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Order ID is required"),
+                    }
+                )
+            ),
+            404: openapi.Response(
+                description="Purchase order not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Purchase order not found"),
+                    }
+                )
+            )
+        }
+    )
+    def delete(self, request, order_id):
+        try:
+            user = request.user
+
+            if users_utils.is_required(order_id):
+                return Response({
+                    "success": False,
+                    "message": "Order ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            purchase_order = products_models.PurchaseOrders.objects.filter(
+                order_id=order_id, user=user, is_deleted=False).first()
+
+            if not purchase_order:
+                return Response({
+                    "success": False,
+                    "message": "Purchase order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            products_models.OrderItems.objects.filter(
+                order=purchase_order).delete()
+
+            purchase_order.delete()
+
+            return Response({
+                "success": True,
+                "message": "Purchase Order Deleted"
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

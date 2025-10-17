@@ -33,3 +33,26 @@ class ProductAdmin(admin.ModelAdmin):
 
 
 admin.site.register(products_models.Products, ProductAdmin)
+
+
+class PurchaseOrdersAdmin(admin.ModelAdmin):
+    list_display = ('order_id', 'user', 'client', 'order_number',
+                    'order_date', 'expected_delivery_date')
+    search_fields = ['order_number', 'user__fullname',
+                     'user__email', 'client__client_name', 'client__email']
+    list_per_page = 15
+    list_filter = ('user', 'client', 'order_date', 'expected_delivery_date')
+
+
+admin.site.register(products_models.PurchaseOrders, PurchaseOrdersAdmin)
+
+
+class PurchaseOrderItemsAdmin(admin.ModelAdmin):
+    list_display = ('item_id', 'order', 'product', 'qty', 'price', 'tax')
+    search_fields = ['product__name']
+    list_per_page = 15
+    list_filter = ('product',)
+
+
+admin.site.register(products_models.OrderItems,
+                    PurchaseOrderItemsAdmin)

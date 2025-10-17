@@ -1,6 +1,7 @@
 # Django
 import os
 from django.db import models
+from django.utils.timezone import now
 from random import randint
 from datetime import datetime, timedelta
 
@@ -75,3 +76,80 @@ class Products(BaseModel):
             pass
 
         super().delete(*args, **kwargs)
+
+
+class PurchaseOrders(BaseModel):
+    order_id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        users_models.User, on_delete=models.CASCADE, blank=True, null=True, related_name="user_purchase_order")
+    client = models.ForeignKey(
+        users_models.ClientModel, on_delete=models.CASCADE, blank=True, null=True, related_name="client_purchase_order")
+    order_number = models.CharField(
+        max_length=255, blank=True, null=True, unique=True)
+    order_date = models.DateField(blank=True, null=True)
+    expected_delivery_date = models.DateField(blank=True, null=True)
+    subtotal = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    tax = models.DecimalField(blank=True, null=True,
+                              max_digits=10, decimal_places=2)
+    total = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    notes = models.TextField(blank=True, null=True)
+    order_status = models.CharField(
+        max_length=100, blank=True, null=True, default="Pending")
+
+    class Meta:
+        verbose_name = "Purchase Order"
+        verbose_name_plural = "Purchase Orders"
+        db_table = "PurchaseOrders"
+
+    def __str__(self):
+        return self.order_number
+
+    def save(self, *args, **kwargs):
+        if not self.order_number and self.user:
+            prefix = ''.join([c for c in self.user.fullname if c.isalpha()])[
+                :2].upper()
+            year = now().year
+            base_prefix = f"{prefix}-{year}"
+
+            # Get latest order for this user in current year
+            latest_order = PurchaseOrders.objects.filter(
+                user=self.user,
+                order_number__startswith=base_prefix
+            ).order_by('-order_number').first()
+
+            if latest_order and latest_order.order_number:
+                try:
+                    # Extract the sequence number and increment it
+                    last_seq = int(latest_order.order_number.split('-')[-1])
+                    next_seq = f"{last_seq + 1:02d}"
+                except:
+                    next_seq = "01"
+            else:
+                next_seq = "01"
+
+            self.order_number = f"{base_prefix}-{next_seq}"
+
+        super().save(*args, **kwargs)
+
+
+class OrderItems(BaseModel):
+    item_id = models.AutoField(primary_key=True)
+    order = models.ForeignKey(
+        PurchaseOrders, on_delete=models.CASCADE, blank=True, null=True, related_name="order_items")
+    product = models.ForeignKey(
+        Products, on_delete=models.CASCADE, blank=True, null=True, related_name="order_product")
+    qty = models.IntegerField(blank=True, null=True)
+    price = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    tax = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+
+    class Meta:
+        verbose_name = "Order Item"
+        verbose_name_plural = "Order Items"
+        db_table = "orderitems"
+
+    def __str__(self):
+        return f"{self.product.name} - {self.qty} items"

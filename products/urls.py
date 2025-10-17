@@ -23,6 +23,15 @@ urlpatterns = [
              name='add-product'),
         path('details/<int:product_id>', products_views.ProductDetailsView.as_view(),
              name='product-details'),
-    ]))
+    ])),
+
+    path('purchase-order/', include([
+        path('', products_views.PurchaseOrderListView.as_view(),
+             name="purchase-order-list"),
+         path('add/', products_views.CreatePurchaseOrderView.as_view(),
+              name="add-purchase-order"),
+         path('details/<int:order_id>', products_views.PurchaseOrderDetailView.as_view(),
+              name="details-purchase-order"),
+         ])),
 
 ]
