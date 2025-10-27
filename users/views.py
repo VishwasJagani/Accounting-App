@@ -131,6 +131,10 @@ class RegisterView(APIView):
             password = data.get('password')
             confirm_password = data.get('confirm_password')
             phone_number = data.get('phone_number')
+            device = data.get('device', None)
+            ip_address = data.get('ip_address', None)
+            state = data.get('state', None)
+            country = data.get('country', None)
 
             # if users_utils.is_required(user_role):
             #     return Response({"success": False, "message": "User role is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -157,6 +161,7 @@ class RegisterView(APIView):
                 return Response({"success": False, "message": "Email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
             data['user_role'] = 2
+            data['last_login'] = timezone.now()
             serializer = users_serializer.UserSerializer(data=data)
 
             if serializer.is_valid():
@@ -166,6 +171,21 @@ class RegisterView(APIView):
 
                 user_data = serializer.data
                 user_data['token'] = token['access']
+
+                login_data = {
+                    "user": user_data.get('user_id'),
+                    "login_time": timezone.now(),
+                    "device": device,
+                    "ip_address": ip_address,
+                    "state": state,
+                    "country": country,
+                }
+
+                login_data_serializer = users_serializer.UserLoginSerializer(
+                    data=login_data)
+
+                if login_data_serializer.is_valid():
+                    login_data_serializer.save()
 
                 return Response({"success": True, "message": "User registered successfully.", "data": user_data}, status=status.HTTP_200_OK)
 
@@ -236,6 +256,10 @@ class LoginView(APIView):
             email = data.get('email')
             password = data.get('password')
             is_admin = data.get('is_admin', False)
+            device = data.get('device', None)
+            ip_address = data.get('ip_address', None)
+            state = data.get('state', None)
+            country = data.get('country', None)
 
             if users_utils.is_required(email):
                 return Response({"success": False, "message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -253,6 +277,24 @@ class LoginView(APIView):
             if user:
                 if check_password(password, user.password):
                     token = users_utils.get_user_token(user)
+                    user.last_login = timezone.now()
+                    user.save()
+
+                    login_data = {
+                        "user": user.user_id,
+                        "login_time": timezone.now(),
+                        "device": device,
+                        "ip_address": ip_address,
+                        "state": state,
+                        "country": country,
+                    }
+
+                    login_data_serializer = users_serializer.UserLoginSerializer(
+                        data=login_data)
+
+                    if login_data_serializer.is_valid():
+                        login_data_serializer.save()
+
                     user_data = users_serializer.UserSerializer(user).data
                     user_data['token'] = token['access']
                     return Response({"success": True, "message": "User logged in successfully.", "data": user_data}, status=status.HTTP_200_OK)
@@ -318,7 +360,15 @@ class UserProfileView(APIView):
         try:
             user = request.user
             serializer = users_serializer.UserSerializer(user)
-            return Response({"success": True, "message": "User profile retrieved successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+            company_obj = users_models.UserCompany.objects.filter(
+                user=user, is_deleted=False).first()
+            comapny_serializer = users_serializer.UserCompanySerializer(
+                company_obj).data
+            response_data = {
+                "user_data": serializer.data,
+                "company_data": comapny_serializer,
+            }
+            return Response({"success": True, "message": "User profile retrieved successfully.", "data": response_data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -589,15 +639,15 @@ class SendOTPView(APIView):
             otp_code = users_models.Otp.objects.create(
                 user=email, otp_type=otp_type)
 
-            send_mail({
-                "otp_code": otp_code.otp,
-                "otp_type": otp_code.otp_type,
-                "email": email,
-                "subject": "OTP Verification",
-                "template_name": "email_verification.html",
-            })
+            # send_mail({
+            #     "otp_code": otp_code.otp,
+            #     "otp_type": otp_code.otp_type,
+            #     "email": email,
+            #     "subject": "OTP Verification",
+            #     "template_name": "email_verification.html",
+            # })
 
-            return Response({"success": True, "message": "An Email has been Sent."}, status=status.HTTP_200_OK)
+            return Response({"success": True, "message": "Please Verify Below OTP code.", "data": otp_code.otp}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1188,6 +1238,559 @@ class AddRemoveFavoriteClient(APIView):
 
             client_obj.save()
             return Response({"success": True, "message": "Favorite status updated successfully.", "data": {"client_id": client_obj.client_id, "is_favorite": client_obj.is_favorite}}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserLoginHistory(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.UserLoginSerializer
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+
+        login_history_obj = users_models.UserLogin.objects.filter(
+            user=self.request.user).order_by('-created_at')
+
+        serializer = self.serializer_class(login_history_obj, many=True)
+
+        return serializer.data
+
+    @swagger_auto_schema(
+        operation_summary="Retrieve User Login History",
+        operation_description="Fetches a paginated list of the authenticated user's login history records.",
+        tags=['User'],
+        manual_parameters=[
+            openapi.Parameter(
+                'page', openapi.IN_QUERY,
+                description="Page number for pagination.",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                example=1
+            ),
+            openapi.Parameter(
+                'page_size', openapi.IN_QUERY,
+                description="Number of results to return per page.",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                example=10
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Login history retrieved successfully.",
+                examples={
+                    "application/json": {
+                        "count": 25,
+                        "next": "https://api.example.com/api/user/login-history/?page=2",
+                        "previous": None,
+                        "results": [
+                            {
+                                "id": 12,
+                                "user": 5,
+                                "ip_address": "192.168.1.45",
+                                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                                "login_time": "2025-10-27T09:45:32Z",
+                                "created_at": "2025-10-27T09:45:32Z"
+                            }
+                        ]
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request — an error occurred while fetching login history.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "An error occurred while fetching login history."
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Unauthorized — user must be authenticated.",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+        }
+    )
+    def get(self, request):
+        try:
+            queryset = self.get_queryset()
+
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(queryset, request)
+            return paginator.get_paginated_response(result_page)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserCompany(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.UserCompanySerializer
+
+    @swagger_auto_schema(
+        operation_summary="Retrieve Authenticated User's Company Details",
+        operation_description="Fetches the company details associated with the authenticated user.",
+        tags=['Company'],
+        responses={
+            200: openapi.Response(
+                description="Company details fetched successfully.",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Company details fetched successfully.",
+                        "data": {
+                            "id": 15,
+                            "name": "TechCorp Solutions",
+                            "registration_number": "TC1234567",
+                            "email": "info@techcorp.com",
+                            "phone": "+1-555-1234",
+                            "address": "123 Silicon Valley Blvd, CA, USA",
+                            "created_at": "2025-01-15T09:45:32Z",
+                            "updated_at": "2025-09-10T12:22:18Z"
+                        }
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Company not found for the authenticated user.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "User does not have a company associated with it."
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request — an unexpected error occurred.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "An unexpected error occurred."
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Unauthorized — user must be authenticated.",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+        }
+    )
+    def get(self, request):
+        try:
+            user = request.user
+
+            if not users_models.UserCompany.objects.filter(user=user, is_deleted=False).exists():
+                return Response({"success": False, "message": "User does not have a company associated with it."}, status=status.HTTP_404_NOT_FOUND)
+
+            company_obj = users_models.UserCompany.objects.get(
+                user=user, is_deleted=False)
+            serializer = self.serializer_class(company_obj).data
+            return Response({"success": True, "message": "Company details fetched successfully.", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Add a Company for the Authenticated User",
+        operation_description=(
+            "Creates and associates a new company with the authenticated user. "
+            "A user can only have one active company record."
+        ),
+        tags=['Company'],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=[
+                'company_name',
+                'registration_number',
+                'tax_id',
+                'business_type',
+                'founded_date',
+                'industry',
+                'address',
+                'country_code',
+                'phone_number',
+                'company_email'
+            ],
+            properties={
+                'company_name': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Name of the company.",
+                    example="Dummy"
+                ),
+                'registration_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Official registration or incorporation number.",
+                    example="12345678"
+                ),
+                'tax_id': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Tax identification number for the company.",
+                    example="123"
+                ),
+                'business_type': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Type of business or sector.",
+                    example="Manufacturing"
+                ),
+                'founded_date': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='date',
+                    description="Date when the company was founded (YYYY-MM-DD).",
+                    example="2024-05-12"
+                ),
+                'industry': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Industry the company operates in.",
+                    example="Automotive"
+                ),
+                'address': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Registered or main address of the company.",
+                    example="123 Industrial Area, Mumbai, India"
+                ),
+                'country_code': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Country calling code (e.g., +91, +1).",
+                    example="+91"
+                ),
+                'phone_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Primary company phone number.",
+                    example="123456789"
+                ),
+                'company_email': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='email',
+                    description="Official email address of the company.",
+                    example="dummy@gmail.com"
+                ),
+                'website': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='uri',
+                    description="Official website URL of the company.",
+                    example="https://dummy.com"
+                ),
+                'bank_name': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Name of the bank where the company holds an account.",
+                    example="ICICI"
+                ),
+                'account_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Company’s bank account number.",
+                    example="123455"
+                ),
+                'routing_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Bank routing number or IFSC code.",
+                    example="Asd213234"
+                ),
+            }
+        ),
+        responses={
+            201: openapi.Response(
+                description="Company added successfully.",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Company added successfully.",
+                        "data": {
+                            "id": 15,
+                            "company_name": "Dummy",
+                            "registration_number": "12345678",
+                            "tax_id": "123",
+                            "business_type": "Manufacturing",
+                            "founded_date": "2024-05-12",
+                            "industry": "Automotive",
+                            "address": "123 Industrial Area, Mumbai, India",
+                            "country_code": "+91",
+                            "phone_number": "123456789",
+                            "company_email": "dummy@gmail.com",
+                            "website": "https://dummy.com",
+                            "bank_name": "ICICI",
+                            "account_number": "123455",
+                            "routing_number": "Asd213234",
+                            "user": 7,
+                            "created_at": "2025-10-27T09:45:32Z"
+                        }
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request — missing or invalid input.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Company Name is required."
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Unauthorized — authentication required.",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+        }
+    )
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            company_name = data.get('company_name')
+
+            if users_utils.is_required(company_name):
+                return Response({"success": False, "message": "Company Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_models.UserCompany.objects.filter(user=user, is_deleted=False).exists():
+                return Response({"success": False, "message": "User already has a company associated with it."}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['user'] = user.user_id
+            serializer = self.serializer_class(data=data)
+
+            if serializer.is_valid():
+                serializer.save(user=user)
+                return Response({"success": True, "message": "Company added successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
+            else:
+                return Response({"success": False, "error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Update Authenticated User's Company Details",
+        operation_description=(
+            "Updates the details of the company associated with the authenticated user. "
+            "All fields are optional; only provided fields will be updated."
+        ),
+        tags=['Company'],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'company_name': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Name of the company.",
+                    example="Dummy Updated"
+                ),
+                'registration_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Official registration or incorporation number.",
+                    example="12345678"
+                ),
+                'tax_id': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Tax identification number for the company.",
+                    example="123"
+                ),
+                'business_type': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Type of business or sector.",
+                    example="Manufacturing"
+                ),
+                'founded_date': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='date',
+                    description="Date when the company was founded (YYYY-MM-DD).",
+                    example="2024-05-12"
+                ),
+                'industry': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Industry the company operates in.",
+                    example="Automotive"
+                ),
+                'address': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Registered or main address of the company.",
+                    example="123 Industrial Area, Mumbai, India"
+                ),
+                'country_code': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Country calling code (e.g., +91, +1).",
+                    example="+91"
+                ),
+                'phone_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Primary company phone number.",
+                    example="123456789"
+                ),
+                'company_email': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='email',
+                    description="Official email address of the company.",
+                    example="dummy@gmail.com"
+                ),
+                'website': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='uri',
+                    description="Official website URL of the company.",
+                    example="https://dummy.com"
+                ),
+                'bank_name': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Name of the bank where the company holds an account.",
+                    example="ICICI"
+                ),
+                'account_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Company’s bank account number.",
+                    example="123455"
+                ),
+                'routing_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Bank routing number or IFSC code.",
+                    example="Asd213234"
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Company updated successfully.",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Company updated successfully.",
+                        "data": {
+                            "id": 15,
+                            "company_name": "Dummy Updated",
+                            "registration_number": "12345678",
+                            "tax_id": "123",
+                            "business_type": "Manufacturing",
+                            "founded_date": "2024-05-12",
+                            "industry": "Automotive",
+                            "address": "123 Industrial Area, Mumbai, India",
+                            "country_code": "+91",
+                            "phone_number": "9876543210",
+                            "company_email": "updated@dummy.com",
+                            "website": "https://dummy.com",
+                            "bank_name": "ICICI",
+                            "account_number": "123455",
+                            "routing_number": "Asd213234",
+                            "updated_at": "2025-10-27T11:15:32Z"
+                        }
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="No company associated with the user.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "User does not have a company associated with it."
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request — invalid or missing data.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Invalid data provided."
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Unauthorized — authentication required.",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+        }
+    )
+    def put(self, request):
+        try:
+            user = request.user
+            data = request.data
+
+            company_obj = users_models.UserCompany.objects.filter(
+                user=user, is_deleted=False).first()
+
+            if not company_obj:
+                return Response({"success": False, "message": "User does not have a company associated with it."}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = self.serializer_class(
+                instance=company_obj, data=data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Company updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Delete Authenticated User's Company",
+        operation_description=(
+            "Deletes the company associated with the authenticated user. "
+            "If no active company is found, a 404 error is returned."
+        ),
+        tags=['Company'],
+        responses={
+            200: openapi.Response(
+                description="Company deleted successfully.",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Company deleted successfully."
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="No active company found for the user.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "User does not have a company associated with it."
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request — an unexpected error occurred.",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "An unexpected error occurred."
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Unauthorized — authentication required.",
+                examples={
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
+            ),
+        }
+    )
+    def delete(self, request):
+        try:
+            user = request.user
+
+            company_obj = users_models.UserCompany.objects.filter(
+                user=user, is_deleted=False).first()
+
+            if not company_obj:
+                return Response({"success": False, "message": "User does not have a company associated with it."}, status=status.HTTP_404_NOT_FOUND)
+
+            company_obj.delete()
+
+            return Response({"success": True, "message": "Company deleted successfully."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

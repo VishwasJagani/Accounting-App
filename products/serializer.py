@@ -33,8 +33,8 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = products_models.Products
-        fields = ['product_id', 'user', 'user_name', 'name', 'item_sku', 'description', 'category', 'category_name', 'stock_level',
-                  'reorder_point', 'selling_price', 'cost_price', 'tax', 'discount_percentage', 'product_image', 'is_active']
+        fields = ['product_id', 'user', 'user_name', 'name', 'item_sku', 'description', 'category', 'category_name', 'unit_of_measurement', 'stock_level',
+                  'reorder_point', 'quantity', 'pcs', 'weight', 'selling_price', 'cost_price', 'profit_margin', 'tax', 'gst_category', 'discount_percentage', 'final_price', 'product_image', 'is_track_inventory', 'is_inter_state_sale', 'is_active']
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):

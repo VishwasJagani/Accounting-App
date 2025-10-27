@@ -41,6 +41,7 @@ class User(BaseModel):
     is_email_verified = models.BooleanField(default=False)
     is_phone_verified = models.BooleanField(default=False)
     is_admin = models.BooleanField(default=False)
+    last_login = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         verbose_name = "User"
@@ -63,6 +64,35 @@ class User(BaseModel):
         super().save(*args, **kwargs)
 
 
+class UserCompany(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name='user_company', blank=True, null=True)
+    company_name = models.CharField(max_length=255, blank=True, null=True)
+    registration_number = models.CharField(
+        max_length=255, blank=True, null=True)
+    tax_id = models.CharField(max_length=255, blank=True, null=True)
+    business_type = models.CharField(max_length=255, blank=True, null=True)
+    founded_date = models.DateField(blank=True, null=True)
+    industry = models.CharField(max_length=255, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    country_code = models.CharField(max_length=10, blank=True, null=True)
+    phone_number = models.CharField(max_length=50, blank=True, null=True)
+    company_email = models.CharField(max_length=255, blank=True, null=True)
+    website = models.CharField(max_length=255, blank=True, null=True)
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    account_number = models.CharField(max_length=255, blank=True, null=True)
+    routing_number = models.CharField(max_length=255, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "User Company"
+        verbose_name_plural = "User Companies"
+        db_table = "UserCompanies"
+
+    def __str__(self):
+        return f"{self.user.fullname} -- {self.company_name}"
+
+
 class Otp(BaseModel):
     otp_id = models.AutoField(primary_key=True)
     user = models.CharField(max_length=50, blank=True, null=True)
@@ -81,7 +111,8 @@ class Otp(BaseModel):
     def save(self, *args, **kwargs):
         try:
             if not self.otp:
-                self.otp = str(randint(100000, 999999))  # Generate a random 6-digit OTP
+                # Generate a random 6-digit OTP
+                self.otp = str(randint(100000, 999999))
             if not self.expiry_time:
                 self.expiry_time = timezone.now() + timedelta(minutes=1)  # Set expiry time in UTC
         except Exception as e:
@@ -125,3 +156,21 @@ class ClientModel(BaseModel):
 
     def __str__(self):
         return self.client_name
+
+
+class UserLogin(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name='user_login', blank=True, null=True)
+    login_time = models.DateTimeField(blank=True, null=True)
+    device = models.CharField(max_length=100, blank=True, null=True)
+    ip_address = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=255, blank=True, null=True)
+    country = models.CharField(max_length=255, blank=True, null=True)
+
+    class Meta:
+        verbose_name = "User Login"
+        verbose_name_plural = "User Logins"
+        db_table = "UserLogins"
+
+    def __str__(self):
+        return self.user.fullname

@@ -50,3 +50,23 @@ class ClientAdmin(admin.ModelAdmin):
 
 
 admin.site.register(users_models.ClientModel, ClientAdmin)
+
+
+class UserLoginAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'login_time')
+    search_fields = ('user__email', 'user__fullname')
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 15
+
+
+admin.site.register(users_models.UserLogin, UserLoginAdmin)
+
+
+class UserCompanyAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'company_name', 'registration_number')
+    search_fields = ('user__email', 'user__fullname')
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 15
+
+
+admin.site.register(users_models.UserCompany, UserCompanyAdmin)

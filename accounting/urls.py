@@ -35,6 +35,7 @@ schema_view = get_schema_view(
    ),
    public=True,
    permission_classes=(permissions.AllowAny,),
+   url = "https://miguelina-untrod-werner.ngrok-free.dev"
 )
 
 urlpatterns = [
@@ -42,6 +43,7 @@ urlpatterns = [
     path('api/v1/', include([
         path('user/', include('users.urls')),
         path('product/', include('products.urls')),
+        path('admin_panel/', include('admin_panel.urls')),
 
     ])),
     re_path(r'^swagger(?P<format>\.json|\.yaml)$',

@@ -30,5 +30,10 @@ urlpatterns = [
              users_views.AddRemoveFavoriteClient.as_view(), name='add-remove-favorite-client'),
     ])),
 
+    path('user-login-history/', users_views.UserLoginHistory.as_view(),
+         name="user-login-history"),
+
+    path('user-company/', users_views.UserCompany.as_view(),
+         name="user-company"),
 
 ]

@@ -21,7 +21,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = users_models.User
         fields = ['user_id', 'fullname', 'email', 'password', 'user_role', 'role_name', 'country_code', 'phone_number', 'date_of_birth',
-                  'profile_image', 'address', 'work_address', 'is_active', 'is_email_verified', 'is_phone_verified', 'is_admin']
+                  'profile_image', 'address', 'work_address', 'is_active', 'is_email_verified', 'is_phone_verified', 'is_admin', 'last_login']
         extra_kwargs = {
             'password': {'write_only': True}
         }
@@ -80,3 +80,26 @@ class ClientSerializer(serializers.ModelSerializer):
         if obj.updated_at:
             return obj.updated_at.strftime('%Y-%m-%d %H:%M:%S')
         return None
+
+
+class UserLoginSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = users_models.UserLogin
+        fields = ['id', 'user', 'login_time',
+                  'device', 'ip_address', 'state', 'country']
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+
+        if instance.login_time:
+            representation['login_time'] = instance.login_time.strftime(
+                '%Y-%m-%d %H:%M:%S')
+
+        return representation
+
+
+class UserCompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = users_models.UserCompany
+        fields = ['id', 'user', 'company_name', 'registration_number', 'tax_id', 'business_type', 'founded_date', 'industry',
+                  'address', 'country_code', 'phone_number', 'company_email', 'website', 'bank_name', 'account_number', 'routing_number', 'is_active']

@@ -3,6 +3,7 @@ import jwt
 # Django
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
+from django.conf import settings
 
 # Rest Framework
 from rest_framework.permissions import BasePermission
@@ -28,7 +29,7 @@ class IsAuthenticated(BasePermission):
         token = auth_header.split(' ')[1]
 
         try:
-            decoded_token = jwt.decode(token, algorithms=['HS256'])
+            decoded_token = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
             user_id = decoded_token.get('user_id')
 
             if user_id is not None:

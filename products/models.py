@@ -35,17 +35,31 @@ class Products(BaseModel):
     description = models.TextField(blank=True, null=True)
     category = models.ForeignKey(
         ProductCategory, on_delete=models.CASCADE, blank=True, null=True, related_name="category_products")
+    unit_of_measurement = models.CharField(
+        max_length=100, blank=True, null=True)
     stock_level = models.IntegerField(default=0, blank=True, null=True)
     reorder_point = models.IntegerField(default=0, blank=True, null=True)
+    quantity = models.IntegerField(blank=True, null=True)
+    pcs = models.IntegerField(blank=True, null=True)
+    weight = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
     selling_price = models.DecimalField(
         max_digits=10, decimal_places=2, blank=True, null=True)
     cost_price = models.DecimalField(
         max_digits=10, decimal_places=2, blank=True, null=True)
+    profit_margin = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
     tax = models.CharField(max_length=100, blank=True, null=True)
+    gst_category = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
     discount_percentage = models.DecimalField(
         max_digits=10, decimal_places=2, blank=True, null=True)
     product_image = models.ImageField(
         upload_to="product_images/", blank=True, null=True)
+    final_price = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
+    is_track_inventory = models.BooleanField(default=False)
+    is_inter_state_sale = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:

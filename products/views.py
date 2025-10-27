@@ -406,7 +406,7 @@ class ProductListView(generics.ListAPIView):
     def get_queryset(self, request):
         user = request.user
         product_obj = products_models.Products.objects.filter(
-            user=user, is_deleted=False)
+            user=user, is_deleted=False).order_by('-created_at')
 
         return product_obj
 
@@ -626,11 +626,20 @@ class ProductDetailsView(APIView):
                                 'description': openapi.Schema(type=openapi.TYPE_STRING),
                                 'category': openapi.Schema(type=openapi.TYPE_INTEGER),
                                 'category_name': openapi.Schema(type=openapi.TYPE_STRING),
+                                'unit_of_measurement': openapi.Schema(type=openapi.TYPE_STRING),
                                 'stock_level': openapi.Schema(type=openapi.TYPE_INTEGER),
                                 'reorder_point': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'quantity': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'pcs': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'weight': openapi.Schema(type=openapi.TYPE_STRING),
                                 'selling_price': openapi.Schema(type=openapi.TYPE_STRING),
                                 'cost_price': openapi.Schema(type=openapi.TYPE_STRING),
+                                'profit_margin': openapi.Schema(type=openapi.TYPE_STRING),
                                 'tax': openapi.Schema(type=openapi.TYPE_STRING),
+                                'gst_category': openapi.Schema(type=openapi.TYPE_STRING),
+                                'final_price': openapi.Schema(type=openapi.TYPE_STRING),
+                                'is_track_inventory': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'is_inter_state_sale': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                                 'discount_percentage': openapi.Schema(type=openapi.TYPE_STRING),
                                 'product_image': openapi.Schema(type=openapi.TYPE_STRING),
                                 'is_active': openapi.Schema(type=openapi.TYPE_BOOLEAN),
