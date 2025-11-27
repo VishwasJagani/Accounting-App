@@ -2,8 +2,6 @@
 import os
 from django.db import models
 from django.utils.timezone import now
-from random import randint
-from datetime import datetime, timedelta
 
 # Local
 from base_files.base_models import BaseModel
@@ -164,6 +162,64 @@ class OrderItems(BaseModel):
         verbose_name = "Order Item"
         verbose_name_plural = "Order Items"
         db_table = "orderitems"
+
+    def __str__(self):
+        return f"{self.product.name} - {self.qty} items"
+
+
+class Invoice(BaseModel):
+    invoice_id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        users_models.User, on_delete=models.CASCADE, blank=True, null=True, related_name="user_invoice")
+    client = models.ForeignKey(
+        users_models.ClientModel, on_delete=models.CASCADE, blank=True, null=True, related_name="client_invoice")
+    invoice_number = models.CharField(max_length=255, blank=True, null=True)
+    issue_date = models.DateField(blank=True, null=True)
+    payment_due = models.DateField(blank=True, null=True)
+    subtotal = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    tax = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    discount = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    total = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    notes = models.TextField(blank=True, null=True)
+    payment_method = models.CharField(max_length=20, blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Invoice"
+        verbose_name_plural = "Invoices"
+        db_table = "invoice"
+
+    def __str__(self):
+        return self.invoice_number
+
+
+class InvoiceItems(BaseModel):
+    item_id = models.AutoField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, on_delete=models.CASCADE, blank=True, null=True, related_name="invoice_items")
+    product = models.ForeignKey(
+        Products, on_delete=models.CASCADE, blank=True, null=True, related_name="invoice_order_product")
+    qty = models.IntegerField(blank=True, null=True)
+    unit_of_measurement = models.CharField(
+        max_length=20, blank=True, null=True)
+    price = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    discount_amount = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    tax = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    gst_category = models.DecimalField(
+        blank=True, null=True, max_digits=10, decimal_places=2)
+    is_inter_state_sale = models.BooleanField(default=False)
+    weight_based_item = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Invoice Item"
+        verbose_name_plural = "Invoice Items"
+        db_table = "invoiceitems"
 
     def __str__(self):
         return f"{self.product.name} - {self.qty} items"

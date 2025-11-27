@@ -34,4 +34,12 @@ urlpatterns = [
               name="details-purchase-order"),
          ])),
 
+    path('invoice/', include([
+         path('', products_views.InvoiceListView.as_view(), name='add-invoice'),
+         path('add/', products_views.AddInvoiceView.as_view(), name='add-invoice'),
+         path('details/<int:invoice_id>',
+              products_views.PurchaseOrderDetailView.as_view(), name='add-invoice'),
+         ])),
+
+    path('home-page/', products_views.HomePageView.as_view(), name='home_page'),
 ]

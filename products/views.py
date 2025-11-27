@@ -1,7 +1,7 @@
 # Django
 import os
 from drf_yasg import openapi
-from django.db.models import Q
+from django.db.models import Q, Sum, F, ExpressionWrapper, DecimalField
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 
@@ -17,6 +17,7 @@ from base_files.base_pagination import CustomPagination
 from users import utils as users_utils
 from products import serializer as products_serializer
 from products import models as products_models
+from decimal import Decimal
 
 
 class ProductCategoryListView(generics.ListAPIView):
@@ -1350,6 +1351,710 @@ class PurchaseOrderDetailView(APIView):
                 "success": True,
                 "message": "Purchase Order Deleted"
             }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InvoiceListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = products_serializer.InvoiceSerializer
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        user = self.request.user
+        invoice_data = products_models.Invoice.objects.filter(
+            is_deleted=False).order_by('-created_at')
+        response_data = []
+
+        invoice_type = self.request.query_params.get('invoice_type')
+
+        if invoice_type:
+            if not invoice_type in ['sales', 'purchase']:
+                return Response({"success": False, "message": "Invalid invoice type"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if invoice_type == 'sales':
+                invoice_data = invoice_data.filter(user=user)
+            if invoice_type == 'purchase':
+                invoice_data = invoice_data.filter(client__email=user.email)
+
+        for invoice in invoice_data:
+            items = products_models.InvoiceItems.objects.filter(
+                invoice=invoice)
+
+            total_items = items.count()
+
+            if invoice_type == "sales":
+                response_data.append({
+                    'invoice_id': invoice.invoice_id,
+                    'client': invoice.client.client_name,
+                    'invoice_number': invoice.invoice_number,
+                    'total_items': total_items,
+                    'total_price': invoice.total,
+                })
+
+            if invoice_type == "purchase":
+                response_data.append({
+                    'invoice_id': invoice.invoice_id,
+                    'user': invoice.user.fullname,
+                    'invoice_number': invoice.invoice_number,
+                    'total_items': total_items,
+                    'total_price': invoice.total,
+                })
+
+        return response_data
+
+    @swagger_auto_schema(
+        operation_summary="List Invoices",
+        operation_description="Retrieve a paginated list of invoices for the authenticated user, filtered by invoice type (sales or purchase).",
+        manual_parameters=[
+            openapi.Parameter(
+                name='invoice_type',
+                in_=openapi.IN_QUERY,
+                description="Filter invoices by type: 'sales' for invoices created by the user, 'purchase' for invoices where user is the client",
+                type=openapi.TYPE_STRING,
+                required=False,
+                enum=['sales', 'purchase']
+            ),
+            openapi.Parameter(
+                name='page',
+                in_=openapi.IN_QUERY,
+                description='Page number for pagination (DRF style)',
+                type=openapi.TYPE_INTEGER,
+                required=False
+            ),
+            openapi.Parameter(
+                name='page_size',
+                in_=openapi.IN_QUERY,
+                description='Number of items per page (if supported)',
+                type=openapi.TYPE_INTEGER,
+                required=False
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="A paginated list of invoices",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Invoices fetched successfully"),
+                        "count": openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                        "next": openapi.Schema(type=openapi.FORMAT_URI, example=None),
+                        "previous": openapi.Schema(type=openapi.FORMAT_URI, example=None),
+                        "results": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    "invoice_id": openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                    "invoice_number": openapi.Schema(type=openapi.TYPE_STRING, example="INV-2025-01"),
+                                    # both client and user are included depending on invoice_type
+                                    "client": openapi.Schema(type=openapi.TYPE_STRING, example="Acme Corp"),
+                                    "user": openapi.Schema(type=openapi.TYPE_STRING, example="Alice Smith"),
+                                    "total_items": openapi.Schema(type=openapi.TYPE_INTEGER, example=3),
+                                    "total_price": openapi.Schema(type=openapi.TYPE_STRING, example="150.00"),
+                                }
+                            )
+                        )
+                    }
+                ),
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Invoices fetched successfully",
+                        "count": 1,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {
+                                "invoice_id": 1,
+                                "invoice_number": "INV-2025-01",
+                                "client": "Acme Corp",
+                                "total_items": 3,
+                                "total_price": "150.00"
+                            }
+                        ]
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        "message": openapi.Schema(type=openapi.TYPE_STRING, example="Invalid invoice type"),
+                    }
+                )
+            )
+        }
+    )
+    def get(self, request):
+        try:
+            response_data = self.get_queryset()
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(
+                response_data, request)
+
+            return paginator.get_paginated_response(result_page)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddInvoiceView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = products_serializer.InvoiceSerializer
+
+    @swagger_auto_schema(
+        operation_summary="Add Invoice",
+        operation_description="Create an invoice for the authenticated user along with its line items.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['client', 'items'],
+            properties={
+                'client': openapi.Schema(type=openapi.TYPE_INTEGER, description='Client ID'),
+                'invoice_number': openapi.Schema(type=openapi.TYPE_STRING, description='Invoice number'),
+                'issue_date': openapi.Schema(type=openapi.TYPE_STRING, format='date'),
+                'payment_due': openapi.Schema(type=openapi.TYPE_STRING, format='date'),
+                'subtotal': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'tax': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'discount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'total': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'notes': openapi.Schema(type=openapi.TYPE_STRING),
+                'payment_method': openapi.Schema(type=openapi.TYPE_STRING),
+                'items': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        required=['product_id', 'qty'],
+                        properties={
+                            'product_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='Product ID'),
+                            'qty': openapi.Schema(type=openapi.TYPE_INTEGER, description='Quantity'),
+                            'price': openapi.Schema(type=openapi.TYPE_NUMBER, description='Unit price'),
+                            'discount_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'tax': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'gst_category': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'is_inter_state_sale': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                            'weight_based_item': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        }
+                    )
+                )
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description='Invoice created successfully',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=True),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING, example='Purchase Order Created Successfully'),
+                        'data': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'invoice_id': openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                'invoice_number': openapi.Schema(type=openapi.TYPE_STRING, example='INV-2025-01'),
+                                'user': openapi.Schema(type=openapi.TYPE_INTEGER, example=5),
+                                'client': openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                                'subtotal': openapi.Schema(type=openapi.TYPE_NUMBER, example=100.00),
+                                'tax': openapi.Schema(type=openapi.TYPE_NUMBER, example=10.00),
+                                'total': openapi.Schema(type=openapi.TYPE_NUMBER, example=110.00),
+                                'order_items': openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            'item_id': openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                            'invoice': openapi.Schema(type=openapi.TYPE_INTEGER, example=1),
+                                            'product': openapi.Schema(type=openapi.TYPE_INTEGER, example=4),
+                                            'qty': openapi.Schema(type=openapi.TYPE_INTEGER, example=2),
+                                            'price': openapi.Schema(type=openapi.TYPE_NUMBER, example='50.00'),
+                                        }
+                                    )
+                                )
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description='Bad request',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN, example=False),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING, example='Client ID is required'),
+                        'error': openapi.Schema(type=openapi.TYPE_OBJECT, example={})
+                    }
+                )
+            )
+        }
+    )
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            client = data.get('client')
+            items = data.get('items')
+
+            if users_utils.is_required(client):
+                return Response({"success": False, "message": "Client ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if items:
+                for item in items:
+                    if users_utils.is_required(item.get('qty')):
+                        return Response({"success": False, "message": "Quantity is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not products_models.Products.objects.filter(product_id=item.get('product_id'), user=user, is_deleted=False).exists():
+                        return Response({"success": False, "message": "Invalid Product ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['user'] = user.user_id
+            serializer = self.serializer_class(data=data)
+
+            if serializer.is_valid():
+                invoice_instance = serializer.save()
+
+                if items:
+                    item_list = []
+                    for item in items:
+                        product = products_models.Products.objects.get(
+                            product_id=item.get('product_id'), user=user, is_deleted=False)
+
+                        item_data = {
+                            'invoice': invoice_instance.invoice_id,
+                            'product': product.product_id,
+                            'qty': item.get('qty'),
+                            'price': item.get('price'),
+                            'discount_amount': item.get('discount_amount'),
+                            'tax': item.get('tax'),
+                            'gst_category': item.get('gst_category'),
+                            'is_inter_state_sale': item.get('is_inter_state_sale'),
+                            'weight_based_item': item.get('weight_based_item')
+                        }
+
+                        items_serializer = products_serializer.InvoiceItemsSerializer(
+                            data=item_data)
+                        if items_serializer.is_valid():
+                            items_serializer.save()
+                            item_list.append(items_serializer.data)
+                        else:
+                            return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                response_data = self.serializer_class(invoice_instance).data
+                response_data['order_items'] = item_list
+
+                return Response({"success": True, "message": "Purchase Order Created Successfully", "data": response_data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PurchaseOrderDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Get Invoice Detail",
+        operation_description="Retrieve the details of a specific invoice by ID for the authenticated user.",
+        tags=["Invoices"],
+        parameters=[
+            openapi.Parameter(
+                'invoice_id', openapi.IN_PATH, description="ID of the invoice to fetch",
+                type=openapi.TYPE_INTEGER, required=True
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Invoice details fetched successfully",
+                schema=products_serializer.InvoiceDetailsSerializer,
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+            404: openapi.Response(
+                description="Invoice not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+        }
+    )
+    def get(self, request, invoice_id):
+        try:
+            user = request.user
+
+            if users_utils.is_required(invoice_id):
+                return Response({
+                    "success": False,
+                    "message": "Invoice ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            invoice = products_models.Invoice.objects.prefetch_related(
+                'invoice_items'
+            ).filter(invoice_id=invoice_id, user=user, is_deleted=False).first()
+
+            if not invoice:
+                return Response({
+                    "success": False,
+                    "message": "No invoice found for the given ID"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = products_serializer.InvoiceDetailsSerializer(
+                invoice)
+            return Response({
+                "success": True,
+                "message": "Invoice Details Fetched",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Update Invoice",
+        operation_description="Update an existing invoice and its line items for the authenticated user.",
+        tags=["Invoices"],
+        request_body=products_serializer.InvoiceSerializer,
+        parameters=[
+            openapi.Parameter(
+                'invoice_id', openapi.IN_PATH, description="ID of the invoice to update",
+                type=openapi.TYPE_INTEGER, required=True
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Invoice updated successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'data': openapi.Schema(type=openapi.TYPE_OBJECT),
+                    }
+                ),
+            ),
+            400: openapi.Response(
+                description="Invalid input or bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'error': openapi.Schema(type=openapi.TYPE_OBJECT),
+                    }
+                ),
+            ),
+            404: openapi.Response(
+                description="Invoice not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+        }
+    )
+    def put(self, request, invoice_id):
+        try:
+            user = request.user
+            data = request.data
+            items = data.get('items')
+
+            if users_utils.is_required(invoice_id):
+                return Response({
+                    "success": False,
+                    "message": "Invoice ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if items:
+                for item in items:
+                    if users_utils.is_required(item.get('qty')):
+                        return Response({"success": False, "message": "Quantity is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not products_models.Products.objects.filter(product_id=item.get('product_id'), user=user, is_deleted=False).exists():
+                        return Response({"success": False, "message": "Invalid Product ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the purchase order
+            invoice = products_models.Invoice.objects.filter(
+                invoice_id=invoice_id, user=user, is_deleted=False).first()
+
+            if not invoice:
+                return Response({"success": False, "message": "Invoice not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Update purchase order fields
+            serializer = products_serializer.InvoiceSerializer(
+                invoice, data=data, partial=True)
+
+            if serializer.is_valid():
+                invoice_data = serializer.save()
+
+                if items:
+                    for item in items:
+                        product_id = item.get('product_id')
+                        qty = item.get('qty')
+                        tax = item.get('tax', 0)
+                        unit_of_measurement = item.get('unit_of_measurement')
+                        gst_category = item.get('gst_category')
+                        price = item.get('price')
+                        discount_amount = item.get('discount_amount')
+                        is_inter_state_sale = item.get('is_inter_state_sale')
+                        weight_based_item = item.get('weight_based_item')
+
+                        product = products_models.Products.objects.get(
+                            product_id=product_id, user=user, is_deleted=False)
+
+                        existing_item = products_models.InvoiceItems.objects.filter(
+                            invoice=invoice_data, product=product).first()
+
+                        if existing_item:
+                            updated = False
+                            new_values = {
+                                'qty': qty,
+                                'tax': tax,
+                                'price': price,
+                                'unit_of_measurement': unit_of_measurement,
+                                'gst_category': gst_category,
+                                'discount_amount': discount_amount,
+                                'is_inter_state_sale': is_inter_state_sale,
+                                'weight_based_item': weight_based_item,
+                            }
+
+                            for attr, new_val in new_values.items():
+                                if getattr(existing_item, attr) != new_val:
+                                    setattr(existing_item, attr, new_val)
+                                    updated = True
+
+                            if updated:
+                                existing_item.save()
+                        else:
+                            item_data = {
+                                'invoice': invoice_data.invoice_id,
+                                'product': product.product_id,
+                                'qty': qty,
+                                'price': price,
+                                'tax': tax,
+                                'unit_of_measurement': unit_of_measurement,
+                                'gst_category': gst_category,
+                                'discount_amount': discount_amount,
+                                'is_inter_state_sale': is_inter_state_sale,
+                                'weight_based_item': weight_based_item
+                            }
+
+                            items_serializer = products_serializer.InvoiceItemsSerializer(
+                                data=item_data)
+                            if items_serializer.is_valid():
+                                items_serializer.save()
+                            else:
+                                return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                invoice_items = products_models.InvoiceItems.objects.filter(
+                    invoice=invoice_data)
+                invoice_items_serializer = products_serializer.InvoiceItemsSerializer(
+                    invoice_items, many=True).data
+
+                response_data = products_serializer.InvoiceSerializer(
+                    invoice_data).data
+                response_data['invoice_items'] = invoice_items_serializer
+
+                return Response({
+                    "success": True,
+                    "message": "Invoice updated successfully",
+                    "data": response_data
+                }, status=status.HTTP_200_OK)
+
+            else:
+                return Response({"success": False, "error": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @swagger_auto_schema(
+        operation_summary="Delete Invoice",
+        operation_description="Delete a specific invoice and all its associated items for the authenticated user.",
+        tags=["Invoices"],
+        parameters=[
+            openapi.Parameter(
+                'invoice_id', openapi.IN_PATH, description="ID of the invoice to delete",
+                type=openapi.TYPE_INTEGER, required=True
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Invoice deleted successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+            404: openapi.Response(
+                description="Invoice not found",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                ),
+            ),
+        }
+    )
+    def delete(self, request, invoice_id):
+        try:
+            user = request.user
+
+            if users_utils.is_required(invoice_id):
+                return Response({
+                    "success": False,
+                    "message": "Invoice ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            invoice = products_models.Invoice.objects.filter(
+                invoice_id=invoice_id, user=user, is_deleted=False).first()
+
+            if not invoice:
+                return Response({
+                    "success": False,
+                    "message": "Inivoice not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            products_models.InvoiceItems.objects.filter(
+                invoice=invoice).delete()
+
+            invoice.delete()
+
+            return Response({
+                "success": True,
+                "message": "Invoice Deleted"
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class HomePageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Home Page Totals",
+        operation_description=(
+            "Return aggregated totals for the authenticated user's dashboard: "
+            "total sales, total purchases, profit, expenses, pending payments and overdue invoices."
+        ),
+        tags=["Dashboard"],
+        responses={
+            200: openapi.Response(
+                description="Home page totals fetched",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'data': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'total_sales': openapi.Schema(type=openapi.TYPE_STRING, example='1000.00'),
+                                'total_purchase': openapi.Schema(type=openapi.TYPE_STRING, example='500.00'),
+                                'profit': openapi.Schema(type=openapi.TYPE_STRING, example='500.00'),
+                                'expenses': openapi.Schema(type=openapi.TYPE_STRING, example='100.00'),
+                                'pending_payments': openapi.Schema(type=openapi.TYPE_STRING, example='200.00'),
+                                'overdue_invoices': openapi.Schema(type=openapi.TYPE_STRING, example='50.00'),
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(
+                description="Bad request",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    }
+                )
+            )
+        }
+    )
+    def get(self, request):
+        try:
+            user = request.user
+            # Total sales: sum of invoice.total for this user
+            total_sales_agg = products_models.Invoice.objects.filter(
+                user=user, is_deleted=False).aggregate(total=Sum('total'))
+            total_sales = total_sales_agg.get('total') or Decimal('0.00')
+
+            # Total purchases: sum of purchase orders total for this user
+            total_purchase_agg = products_models.PurchaseOrders.objects.filter(
+                user=user, is_deleted=False).aggregate(total=Sum('total'))
+            total_purchase = total_purchase_agg.get('total') or Decimal('0.00')
+
+            # Profit: use invoice items to compute (price - cost_price) * qty where possible
+            profit = Decimal('0.00')
+            invoice_items_qs = products_models.InvoiceItems.objects.select_related('product', 'invoice').filter(
+                invoice__user=user, invoice__is_deleted=False
+            )
+
+            for item in invoice_items_qs:
+                qty = Decimal(item.qty or 0)
+                price = Decimal(item.price or 0)
+                cost_price = Decimal(
+                    getattr(item.product, 'cost_price', 0) or 0)
+                profit += (price - cost_price) * qty
+
+            # Pending payments: invoices with a payment_due in the future or today (no payment tracking exists)
+            today = timezone.localdate()
+            pending_agg = products_models.Invoice.objects.filter(
+                user=user, is_deleted=False, payment_due__isnull=False, payment_due__gte=today).aggregate(total=Sum('total'))
+            pending_payments = pending_agg.get('total') or Decimal('0.00')
+
+            # Overdue invoices: payment_due before today
+            overdue_agg = products_models.Invoice.objects.filter(
+                user=user, is_deleted=False, payment_due__isnull=False, payment_due__lt=today).aggregate(total=Sum('total'))
+            overdue_invoices = overdue_agg.get('total') or Decimal('0.00')
+
+            # Expenses: no Expense model present in this project; return 0.00 for now.
+            expenses = Decimal('0.00')
+
+            data = {
+                "total_sales": str(total_sales),
+                "total_purchase": str(total_purchase),
+                "profit": str(profit),
+                "expenses": str(expenses),
+                "pending_payments": str(pending_payments),
+                "overdue_invoices": str(overdue_invoices),
+            }
+
+            return Response({"success": True, "message": "Home page totals fetched", "data": data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -56,3 +56,25 @@ class PurchaseOrderItemsAdmin(admin.ModelAdmin):
 
 admin.site.register(products_models.OrderItems,
                     PurchaseOrderItemsAdmin)
+
+
+class InvoiceAdmin(admin.ModelAdmin):
+    list_display = ('invoice_id', 'user', 'client',
+                    'invoice_number', 'payment_due', 'total')
+    search_fields = ['invoice_number', 'user__fullname',
+                     'user__email', 'client__client_name', 'client__email']
+    list_per_page = 15
+    list_filter = ('user', 'client', 'issue_date', 'payment_due')
+
+
+admin.site.register(products_models.Invoice, InvoiceAdmin)
+
+
+class InvoiceItemsAdmin(admin.ModelAdmin):
+    list_display = ('item_id', 'invoice', 'product', 'qty', 'price', 'tax')
+    search_fields = ['product__name']
+    list_per_page = 15
+    list_filter = ('product',)
+
+
+admin.site.register(products_models.InvoiceItems, InvoiceItemsAdmin)

@@ -757,10 +757,29 @@ class ClientView(generics.ListAPIView):
     serializer_class = users_serializer.ClientListSerializer
 
     def get_queryset(self):
-        return users_models.ClientModel.objects.filter(
+        search_params = self.request.query_params.get('search', '')
+        user_type = self.request.query_params.get('user_type', 'client')
+        is_favorite = self.request.query_params.get('is_favorite', None)
+
+        users = users_models.ClientModel.objects.filter(
             user=self.request.user,
             is_deleted=False
         ).order_by('-created_at')
+
+        if search_params:
+            users = users.filter(Q(client_name__icontains=search_params) | Q(
+                email__icontains=search_params)).distinct()
+
+        if user_type:
+            users = users.filter(user_type=user_type)
+
+        if is_favorite:
+            if is_favorite == 'true':
+                users = users.filter(is_favorite=True)
+            else:
+                users = users.filter(is_favorite=False)
+
+        return users
 
     @swagger_auto_schema(
         operation_summary="List clients for the authenticated user",

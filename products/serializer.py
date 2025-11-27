@@ -85,3 +85,45 @@ class PurchaseOrderDetailsSerializer(serializers.ModelSerializer):
             'order_id', 'order_number', 'order_date', 'expected_delivery_date',
             'subtotal', 'tax', 'total', 'notes', 'order_status', 'client', 'order_items'
         ]
+
+
+class InvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = products_models.Invoice
+        fields = ['invoice_id', 'user', 'client', 'invoice_number', 'issue_date',
+                  'payment_due', 'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method']
+
+
+class InvoiceItemsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = products_models.InvoiceItems
+        fields = ['item_id', 'invoice', 'product', 'qty', 'unit_of_measurement',
+                  'price', 'discount_amount', 'tax', 'gst_category', 'is_inter_state_sale', 'weight_based_item']
+
+
+class InvoiceItemDetailsSerializer(serializers.ModelSerializer):
+    product = ProductSerializer()
+
+    class Meta:
+        model = products_models.InvoiceItems
+        fields = ['item_id', 'product', 'qty', 'unit_of_measurement', 'price',
+                  'discount_amount', 'tax', 'gst_category', 'is_inter_state_sale', 'weight_based_item']
+
+
+class ClientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = users_models.ClientModel
+        # include the fields you need
+        fields = ['client_id', 'client_name', 'email', 'phone_number']
+
+
+class InvoiceDetailsSerializer(serializers.ModelSerializer):
+    invoice_items = InvoiceItemDetailsSerializer(many=True, read_only=True)
+    client = ClientSerializer(read_only=True)
+
+    class Meta:
+        model = products_models.Invoice
+        fields = [
+            'invoice_id', 'invoice_number', 'issue_date', 'payment_due',
+            'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method', 'client', 'invoice_items'
+        ]
