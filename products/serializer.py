@@ -19,11 +19,17 @@ class ProductCategorySerializer(serializers.ModelSerializer):
 
 class ProductListSerializer(serializers.ModelSerializer):
     category_name = serializers.ReadOnlyField(source='category.category_name')
+    product_image = serializers.SerializerMethodField()
 
     class Meta:
         model = products_models.Products
         fields = ['product_id', 'name', 'category',
-                  'category_name', 'is_active']
+                  'category_name', 'item_sku', 'product_image', 'stock_level', 'final_price', 'quantity', 'is_active']
+
+    def get_product_image(self, obj):
+        if obj.product_image:
+            return obj.product_image.url
+        return None
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -41,7 +47,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = products_models.PurchaseOrders
         fields = ['order_id', 'user', 'client', 'order_number', 'order_date',
-                  'expected_delivery_date', 'subtotal', 'tax', 'total', 'notes', 'order_status']
+                  'expected_delivery_date', 'subtotal', 'tax', 'total', 'notes', 'order_status', 'order_type']
 
 
 class OrderItemsSeializer(serializers.ModelSerializer):
@@ -83,7 +89,7 @@ class PurchaseOrderDetailsSerializer(serializers.ModelSerializer):
         model = products_models.PurchaseOrders
         fields = [
             'order_id', 'order_number', 'order_date', 'expected_delivery_date',
-            'subtotal', 'tax', 'total', 'notes', 'order_status', 'client', 'order_items'
+            'subtotal', 'tax', 'total', 'notes', 'order_status', 'order_type', 'client', 'order_items'
         ]
 
 
@@ -91,7 +97,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = products_models.Invoice
         fields = ['invoice_id', 'user', 'client', 'invoice_number', 'issue_date',
-                  'payment_due', 'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method']
+                  'payment_due', 'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method', 'invoice_type']
 
 
 class InvoiceItemsSerializer(serializers.ModelSerializer):
@@ -125,5 +131,4 @@ class InvoiceDetailsSerializer(serializers.ModelSerializer):
         model = products_models.Invoice
         fields = [
             'invoice_id', 'invoice_number', 'issue_date', 'payment_due',
-            'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method', 'client', 'invoice_items'
-        ]
+            'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method', 'client', 'invoice_items', 'invoice_type']

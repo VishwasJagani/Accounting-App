@@ -37,7 +37,7 @@ admin.site.register(products_models.Products, ProductAdmin)
 
 class PurchaseOrdersAdmin(admin.ModelAdmin):
     list_display = ('order_id', 'user', 'client', 'order_number',
-                    'order_date', 'expected_delivery_date')
+                    'order_date', 'expected_delivery_date', 'order_type')
     search_fields = ['order_number', 'user__fullname',
                      'user__email', 'client__client_name', 'client__email']
     list_per_page = 15

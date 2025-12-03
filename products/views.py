@@ -459,7 +459,15 @@ class ProductListView(generics.ListAPIView):
             if category:
                 queryset = queryset.filter(category=category)
             serializer = self.serializer_class(queryset, many=True)
-            return Response({"success": True, "message": "Product Data Fetched", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            total_value = 0
+
+            for data in serializer.data:
+                if data['final_price'] is not None and data['quantity'] is not None:
+                    total_value += float(data['final_price']) * \
+                        int(data['quantity'])
+
+            return Response({"success": True, "message": "Product Data Fetched", "data": serializer.data, "total_value": total_value}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -764,8 +772,14 @@ class PurchaseOrderListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        order_type = self.request.query_params.get('order_type', None)
+
         order_data = products_models.PurchaseOrders.objects.filter(
             user=user, is_deleted=False).order_by('-created_at')
+
+        if order_type:
+            order_data = order_data.filter(order_type=order_type)
+
         response_data = []
 
         for order in order_data:
@@ -931,9 +945,16 @@ class CreatePurchaseOrderView(APIView):
             data = request.data
             client = data.get('client')
             items = data.get('items')
+            order_type = data.get('order_type')
 
             if users_utils.is_required(client):
                 return Response({"success": False, "message": "Client ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(order_type):
+                return Response({"success": False, "message": "Order type is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if order_type and order_type not in ["purchase", "sales"]:
+                return Response({"success": False, "message": "Invalid order type"}, status=status.HTTP_400_BAD_REQUEST)
 
             if items:
                 for item in items:
@@ -1373,10 +1394,8 @@ class InvoiceListView(generics.ListAPIView):
             if not invoice_type in ['sales', 'purchase']:
                 return Response({"success": False, "message": "Invalid invoice type"}, status=status.HTTP_400_BAD_REQUEST)
 
-            if invoice_type == 'sales':
-                invoice_data = invoice_data.filter(user=user)
-            if invoice_type == 'purchase':
-                invoice_data = invoice_data.filter(client__email=user.email)
+            if invoice_type:
+                invoice_data = invoice_data.filter(invoice_type=invoice_type)
 
         for invoice in invoice_data:
             items = products_models.InvoiceItems.objects.filter(
@@ -1391,6 +1410,7 @@ class InvoiceListView(generics.ListAPIView):
                     'invoice_number': invoice.invoice_number,
                     'total_items': total_items,
                     'total_price': invoice.total,
+                    'status': invoice.status,
                 })
 
             if invoice_type == "purchase":
@@ -1400,6 +1420,7 @@ class InvoiceListView(generics.ListAPIView):
                     'invoice_number': invoice.invoice_number,
                     'total_items': total_items,
                     'total_price': invoice.total,
+                    'status': invoice.status,
                 })
 
         return response_data
@@ -1598,9 +1619,16 @@ class AddInvoiceView(APIView):
             data = request.data
             client = data.get('client')
             items = data.get('items')
+            invoice_type = data.get('invoice_type')
 
             if users_utils.is_required(client):
                 return Response({"success": False, "message": "Client ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(invoice_type):
+                return Response({"success": False, "message": "Invoice type is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if invoice_type and invoice_type not in ["purchase", "sales"]:
+                return Response({"success": False, "message": "Invalid invoice type"}, status=status.HTTP_400_BAD_REQUEST)
 
             if items:
                 for item in items:
@@ -1651,7 +1679,7 @@ class AddInvoiceView(APIView):
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class PurchaseOrderDetailView(APIView):
+class InvoiceOrderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
@@ -2010,12 +2038,12 @@ class HomePageView(APIView):
             user = request.user
             # Total sales: sum of invoice.total for this user
             total_sales_agg = products_models.Invoice.objects.filter(
-                user=user, is_deleted=False).aggregate(total=Sum('total'))
+                user=user, invoice_type="sales", is_deleted=False).aggregate(total=Sum('total'))
             total_sales = total_sales_agg.get('total') or Decimal('0.00')
 
             # Total purchases: sum of purchase orders total for this user
             total_purchase_agg = products_models.PurchaseOrders.objects.filter(
-                user=user, is_deleted=False).aggregate(total=Sum('total'))
+                user=user, order_type="purchase", is_deleted=False).aggregate(total=Sum('total'))
             total_purchase = total_purchase_agg.get('total') or Decimal('0.00')
 
             # Profit: use invoice items to compute (price - cost_price) * qty where possible
@@ -2034,12 +2062,12 @@ class HomePageView(APIView):
             # Pending payments: invoices with a payment_due in the future or today (no payment tracking exists)
             today = timezone.localdate()
             pending_agg = products_models.Invoice.objects.filter(
-                user=user, is_deleted=False, payment_due__isnull=False, payment_due__gte=today).aggregate(total=Sum('total'))
+                user=user, invoice_type="sales", is_deleted=False, payment_due__isnull=False, payment_due__gte=today).aggregate(total=Sum('total'))
             pending_payments = pending_agg.get('total') or Decimal('0.00')
 
             # Overdue invoices: payment_due before today
             overdue_agg = products_models.Invoice.objects.filter(
-                user=user, is_deleted=False, payment_due__isnull=False, payment_due__lt=today).aggregate(total=Sum('total'))
+                user=user, invoice_type="purchase", is_deleted=False, payment_due__isnull=False, payment_due__lt=today).aggregate(total=Sum('total'))
             overdue_invoices = overdue_agg.get('total') or Decimal('0.00')
 
             # Expenses: no Expense model present in this project; return 0.00 for now.

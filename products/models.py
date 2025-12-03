@@ -109,6 +109,7 @@ class PurchaseOrders(BaseModel):
     notes = models.TextField(blank=True, null=True)
     order_status = models.CharField(
         max_length=100, blank=True, null=True, default="Pending")
+    order_type = models.CharField(max_length=20, blank=True, null=True, default="purchase") # purchase or sales
 
     class Meta:
         verbose_name = "Purchase Order"
@@ -186,6 +187,8 @@ class Invoice(BaseModel):
         blank=True, null=True, max_digits=10, decimal_places=2)
     notes = models.TextField(blank=True, null=True)
     payment_method = models.CharField(max_length=20, blank=True, null=True)
+    status = models.CharField(max_length=20, blank=True, null=True, default="Pending")
+    invoice_type = models.CharField(max_length=20, blank=True, null=True, default="purchase") # purchase or sales
 
     class Meta:
         verbose_name = "Invoice"

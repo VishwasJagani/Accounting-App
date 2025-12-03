@@ -39,6 +39,7 @@ class CustomPagination(PageNumberPagination):
         if api_type == "app":
             return Response({
                 "success": True,
+                "message": "Data fetched successfully.",
                 "data": {
                     'links': {
                         'next': self.get_next_link(),
