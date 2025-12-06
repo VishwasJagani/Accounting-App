@@ -28,6 +28,8 @@ urlpatterns = [
              users_views.ClientDetailView.as_view(), name='client-details'),
         path('add-remove-favorite/<int:client_id>',
              users_views.AddRemoveFavoriteClient.as_view(), name='add-remove-favorite-client'),
+        path('<int:client_id>/invoices',
+             users_views.InvoiceListByClientID.as_view(), name='add-remove-favorite-client'),
     ])),
 
     path('user-login-history/', users_views.UserLoginHistory.as_view(),

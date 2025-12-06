@@ -1,7 +1,8 @@
 # Django
 import os
+from decimal import Decimal
 from drf_yasg import openapi
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from django.contrib.auth.hashers import check_password
@@ -16,6 +17,8 @@ from rest_framework.response import Response
 from users import models as users_models
 from users import serializer as users_serializer
 from users import utils as users_utils
+from products import models as products_models
+from products import serializer as products_serializer
 from base_files.base_permission import IsAuthenticated
 from base_files.base_pagination import CustomPagination
 from base_files.base_task import send_mail
@@ -998,8 +1001,89 @@ class ClientDetailView(APIView):
                     is_deleted=False,
                 )
 
-                serializer = self.serializer_class(client).data
-                return Response({"success": True, "message": "Client fetched successfully.", "data": serializer}, status=status.HTTP_200_OK)
+                data = {
+                    "client_id": client.client_id,
+                    "client_name": client.client_name,
+                    "email": client.email,
+                    "phone_number": client.phone_number,
+                    "client_since": client.created_at.strftime("%b %d,%Y")
+                }
+
+                try:
+                    invoices = products_models.Invoice.objects.filter(
+                        user=user, client=client, is_deleted=False)
+                    total_invoiced = invoices.aggregate(
+                        total=Sum('total')).get('total') or Decimal('0.00')
+
+                    paid_invoices = invoices.filter(status__iexact='paid')
+                    total_paid = paid_invoices.aggregate(
+                        total=Sum('total')).get('total') or Decimal('0.00')
+
+                    outstanding = Decimal(total_invoiced) - Decimal(total_paid)
+
+                    last_paid_invoice = paid_invoices.order_by(
+                        '-updated_at').first()
+                    if last_paid_invoice and last_paid_invoice.updated_at:
+                        delta = timezone.now() - last_paid_invoice.updated_at
+                        days = delta.days
+                        if days <= 0:
+                            last_payment_text = "Last payment: today"
+                        elif days == 1:
+                            last_payment_text = "Last payment: 1 day ago"
+                        else:
+                            last_payment_text = f"Last payment: {days} days ago"
+                    else:
+                        last_payment_text = "No payments yet"
+
+                    now = timezone.now()
+                    start_of_month = now.replace(
+                        day=1, hour=0, minute=0, second=0, microsecond=0)
+                    paid_this_month = paid_invoices.filter(updated_at__gte=start_of_month).aggregate(
+                        total=Sum('total')).get('total') or Decimal('0.00')
+
+                    recent_invoices = []
+                    try:
+                        recent_qs = invoices.order_by('-issue_date')[:5]
+                        for inv in recent_qs:
+                            if inv.payment_due:
+                                due_text = f"Due {inv.payment_due.strftime('%b %d, %Y')}"
+                            else:
+                                due_text = ""
+
+                            total_val = inv.total if inv.total is not None else Decimal(
+                                '0.00')
+                            try:
+                                total_str = f"${Decimal(total_val):,.2f}"
+                            except Exception:
+                                total_str = f"${total_val}"
+
+                            recent_invoices.append({
+                                "invoice_number": inv.invoice_number or str(inv.invoice_id),
+                                "due_date": due_text,
+                                "total": total_str,
+                                "status": inv.status or "",
+                            })
+                    except Exception:
+                        recent_invoices = []
+
+                    data.update({
+                        "outstanding_balance": f"{Decimal(outstanding):.2f}",
+                        "total_paid": f"{Decimal(total_paid):.2f}",
+                        "paid_this_month": f"{Decimal(paid_this_month):.2f}",
+                        "last_payment": last_payment_text,
+                        "recent_invoices": recent_invoices,
+                        # "invoices": products_serializer.InvoiceSerializer(invoices, many=True).data,
+                    })
+                except Exception:
+                    data.update({
+                        "outstanding_balance": "0.00",
+                        "total_paid": "0.00",
+                        "paid_this_month": "0.00",
+                        "last_payment": "No payments yet",
+                        "invoices": []
+                    })
+
+                return Response({"success": True, "message": "Client Details fetched", "data": data}, status=status.HTTP_200_OK)
 
             except users_models.ClientModel.DoesNotExist:
                 return Response({"success": False, "message": "Client not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -1810,6 +1894,32 @@ class UserCompany(APIView):
             company_obj.delete()
 
             return Response({"success": True, "message": "Company deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InvoiceListByClientID(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    serializer_class = products_serializer.InvoiceSerializer
+
+    def get_queryset(self, client_id):
+
+        invoices = products_models.Invoice.objects.filter(
+            user=self.request.user, client=client_id, is_deleted=False)
+
+        return invoices
+
+    def get(self, request, client_id):
+        try:
+            queryset = self.get_queryset(client_id)
+
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(queryset, request)
+
+            serializer = self.serializer_class(result_page, many=True)
+            return paginator.get_paginated_response(serializer.data)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

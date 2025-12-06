@@ -1428,6 +1428,7 @@ class InvoiceListView(generics.ListAPIView):
     @swagger_auto_schema(
         operation_summary="List Invoices",
         operation_description="Retrieve a paginated list of invoices for the authenticated user, filtered by invoice type (sales or purchase).",
+        tags=['Invoices'],
         manual_parameters=[
             openapi.Parameter(
                 name='invoice_type',
@@ -1531,6 +1532,7 @@ class AddInvoiceView(APIView):
     @swagger_auto_schema(
         operation_summary="Add Invoice",
         operation_description="Create an invoice for the authenticated user along with its line items.",
+        tags=['Invoices'],
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             required=['client', 'items'],
