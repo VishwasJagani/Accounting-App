@@ -1911,6 +1911,20 @@ class InvoiceListByClientID(generics.ListAPIView):
 
         return invoices
 
+    @swagger_auto_schema(
+        operation_summary="Retrieve Invoices by Client ID",
+        operation_description="Fetches a paginated list of invoices associated with a specific client ID for the authenticated user.",
+        tags=['Client / Supplier'],
+        manual_parameters=[
+            openapi.Parameter(
+                'client_id',
+                openapi.IN_PATH,
+                description="UUID of the client to fetch invoices for",
+                type=openapi.TYPE_STRING,
+                required=True
+            )
+        ],
+    )
     def get(self, request, client_id):
         try:
             queryset = self.get_queryset(client_id)
@@ -1920,6 +1934,41 @@ class InvoiceListByClientID(generics.ListAPIView):
 
             serializer = self.serializer_class(result_page, many=True)
             return paginator.get_paginated_response(serializer.data)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetInfoFromGSTNumber(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Get Company Info from GST Number",
+        operation_description="Retrieves company information based on the provided GST number.",
+        tags=['Company'],
+        manual_parameters=[
+            openapi.Parameter(
+                'gst_number', openapi.IN_QUERY,
+                description="GST number to fetch company information for.",
+                type=openapi.TYPE_STRING,
+                required=True
+            )
+        ],
+    )
+    def get(self, request):
+        try:
+            gst_number = request.query_params.get('gst_number')
+
+            if users_utils.is_required(gst_number):
+                return Response({"success": False, "message": "GST number is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            company_info = users_utils.fetch_company_info_from_gst_number(
+                gst_number)
+
+            if not company_info.get('data'):
+                return Response({"success": False, "message": "No company found for the provided GST number."}, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({"success": True, "message": "Company details fetched successfully.", "data": company_info.get('data')}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -1,4 +1,6 @@
 # Rest Framework
+import os
+import requests
 from rest_framework_simplejwt.tokens import RefreshToken
 
 # Django
@@ -35,6 +37,19 @@ def is_valid_image(file):
 
     except Exception as e:
         return False
+
+
+def fetch_company_info_from_gst_number(gst_number):
+
+    api_key = os.getenv("GST_API_KEY") 
+    api_url = f"https://sheet.gstincheck.co.in/check/{api_key}/{gst_number}"
+
+    resp = requests.get(api_url)
+    
+    if resp.status_code == 200:
+        return resp.json()
+    
+    return None
 
 
 def send_mail(data):

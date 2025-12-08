@@ -38,4 +38,7 @@ urlpatterns = [
     path('user-company/', users_views.UserCompany.as_view(),
          name="user-company"),
 
+    path('get-info-from-gst-number/', users_views.GetInfoFromGSTNumber.as_view(),
+         name="get-info-from-gst-number"),
+
 ]

@@ -6,3 +6,4 @@ pillow==10.4.0
 python-dotenv==1.0.1
 django-cors-headers==4.4.0
 drf-yasg==1.21.10
+requests==2.32.4
