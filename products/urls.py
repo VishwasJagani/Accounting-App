@@ -32,13 +32,17 @@ urlpatterns = [
               name="add-purchase-order"),
          path('details/<int:order_id>', products_views.PurchaseOrderDetailView.as_view(),
               name="details-purchase-order"),
+         path('update-status/<int:order_id>', products_views.UpdateOrderStatus.as_view(),
+              name="update-status-purchase-order"),
          ])),
 
     path('invoice/', include([
-         path('', products_views.InvoiceListView.as_view(), name='add-invoice'),
+         path('', products_views.InvoiceListView.as_view(), name='invoice-list'),
          path('add/', products_views.AddInvoiceView.as_view(), name='add-invoice'),
-         path('details/<int:invoice_id>',
-              products_views.InvoiceOrderDetailView.as_view(), name='add-invoice'),
+         path('details/<int:invoice_id>',                   
+              products_views.InvoiceOrderDetailView.as_view(), name='details-invoice'),
+         path('update-status/<int:invoice_id>',
+              products_views.UpdateInvoiceStatus.as_view(), name='update-status-invoice'),
          ])),
 
     path('home-page/', products_views.HomePageView.as_view(), name='home_page'),

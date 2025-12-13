@@ -103,3 +103,10 @@ class UserCompanySerializer(serializers.ModelSerializer):
         model = users_models.UserCompany
         fields = ['id', 'user', 'company_name', 'registration_number', 'tax_id', 'business_type', 'founded_date', 'industry',
                   'address', 'country_code', 'phone_number', 'company_email', 'website', 'bank_name', 'account_number', 'routing_number', 'is_active']
+
+
+class UserExpenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = users_models.UserExpense
+        fields = ['id', 'user', 'expense_name', 'amount', 'category',
+                  'expense_date', 'description']

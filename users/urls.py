@@ -41,4 +41,13 @@ urlpatterns = [
     path('get-info-from-gst-number/', users_views.GetInfoFromGSTNumber.as_view(),
          name="get-info-from-gst-number"),
 
+    path('reports/', users_views.ReportsView.as_view(),
+         name="reports"),
+
+    path('expense/', include([
+         path('', users_views.UserExpenseList.as_view(), name="expense_list"),
+         path('add/', users_views.AddUserExpense.as_view(), name="add_expense"),
+         path('report/', users_views.ExpenseReportPage.as_view(), name="expense_report"),
+         ]))
+
 ]

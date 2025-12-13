@@ -109,7 +109,8 @@ class PurchaseOrders(BaseModel):
     notes = models.TextField(blank=True, null=True)
     order_status = models.CharField(
         max_length=100, blank=True, null=True, default="Pending")
-    order_type = models.CharField(max_length=20, blank=True, null=True, default="purchase") # purchase or sales
+    order_type = models.CharField(
+        max_length=20, blank=True, null=True, default="purchase")  # purchase or sales
 
     class Meta:
         verbose_name = "Purchase Order"
@@ -187,8 +188,10 @@ class Invoice(BaseModel):
         blank=True, null=True, max_digits=10, decimal_places=2)
     notes = models.TextField(blank=True, null=True)
     payment_method = models.CharField(max_length=20, blank=True, null=True)
-    status = models.CharField(max_length=20, blank=True, null=True, default="Pending")
-    invoice_type = models.CharField(max_length=20, blank=True, null=True, default="purchase") # purchase or sales
+    status = models.CharField(
+        max_length=20, blank=True, null=True, default="Pending")
+    invoice_type = models.CharField(
+        max_length=20, blank=True, null=True, default="purchase")  # purchase or sales
 
     class Meta:
         verbose_name = "Invoice"
@@ -226,3 +229,21 @@ class InvoiceItems(BaseModel):
 
     def __str__(self):
         return f"{self.product.name} - {self.qty} items"
+
+
+class ActivityLog(BaseModel):
+    user = models.ForeignKey(
+        users_models.User, on_delete=models.CASCADE, blank=True, null=True, related_name="user_activity_log")
+    action = models.CharField(max_length=255, blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    title = models.CharField(max_length=255, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    extra_data = models.JSONField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Activity Log"
+        verbose_name_plural = "Activity Logs"
+        db_table = "ActivityLogs"
+
+    def __str__(self):
+        return f"{self.user.fullname} - {self.action} at {self.timestamp}"

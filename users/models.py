@@ -174,3 +174,23 @@ class UserLogin(BaseModel):
 
     def __str__(self):
         return self.user.fullname
+
+
+class UserExpense(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name='user_expense', blank=True, null=True)
+    expense_name = models.CharField(max_length=255, blank=True, null=True)
+    amount = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
+    category = models.CharField(max_length=100, blank=True, null=True)
+    expense_date = models.DateField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "User Expense"
+        verbose_name_plural = "User Expenses"
+        db_table = "UserExpenses"
+
+    def __str__(self):
+        return f"{self.user.fullname} - {self.amount}"

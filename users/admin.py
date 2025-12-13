@@ -70,3 +70,13 @@ class UserCompanyAdmin(admin.ModelAdmin):
 
 
 admin.site.register(users_models.UserCompany, UserCompanyAdmin)
+
+
+class UserExpenseAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'amount', 'expense_date')
+    search_fields = ('user__email', 'user__fullname')
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 15
+
+
+admin.site.register(users_models.UserExpense, UserExpenseAdmin)

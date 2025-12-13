@@ -989,8 +989,20 @@ class CreatePurchaseOrderView(APIView):
                         if items_serializer.is_valid():
                             items_serializer.save()
                             item_list.append(items_serializer.data)
+
                         else:
                             return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                products_models.ActivityLog.objects.create(
+                    user=user,
+                    action="purchase_order" if order_type == "purchase" else "sales_order",
+                    title=f"{'Purchase' if order_type == 'purchase' else 'Sales'} Order Created - {order_instance.order_number}",
+                    description=f"New {'Purchase' if order_type == 'purchase' else 'Sales'} Order Created - {order_instance.order_number} from {order_instance.client.client_name}",
+                    extra_data={
+                        "order_id": order_instance.order_id,
+                        "amount": float(order_instance.total),
+                    },
+                )
 
                 response_data = self.serializer_class(order_instance).data
                 response_data['order_items'] = item_list
@@ -1640,6 +1652,10 @@ class AddInvoiceView(APIView):
                     if not products_models.Products.objects.filter(product_id=item.get('product_id'), user=user, is_deleted=False).exists():
                         return Response({"success": False, "message": "Invalid Product ID."}, status=status.HTTP_400_BAD_REQUEST)
 
+            # if data.get('invoice_type') and data.get('invoice_type') == "purchase":
+            #     if data.get('payment_method') in ['card', 'upi']:
+            #         data['status'] = "Paid"
+
             data['user'] = user.user_id
             serializer = self.serializer_class(data=data)
 
@@ -1671,6 +1687,17 @@ class AddInvoiceView(APIView):
                             item_list.append(items_serializer.data)
                         else:
                             return Response({"success": False, "error": items_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+                products_models.ActivityLog.objects.create(
+                    user=user,
+                    action="purchase_order" if invoice_type == "purchase" else "sales_order",
+                    title=f"{'Purchase' if invoice_type == 'purchase' else 'Sales'} Order Created - {invoice_instance.invoice_number}",
+                    description=f"New {'Purchase' if invoice_type == 'purchase' else 'Sales'} Order Created - {invoice_instance.invoice_number} from {invoice_instance.client.client_name}",
+                    extra_data={
+                        "invoice_id": invoice_instance.invoice_id,
+                        "amount": float(invoice_instance.total),
+                    },
+                )
 
                 response_data = self.serializer_class(invoice_instance).data
                 response_data['order_items'] = item_list
@@ -2070,7 +2097,32 @@ class HomePageView(APIView):
             # Overdue invoices: payment_due before today
             overdue_agg = products_models.Invoice.objects.filter(
                 user=user, invoice_type="purchase", is_deleted=False, payment_due__isnull=False, payment_due__lt=today).aggregate(total=Sum('total'))
-            overdue_invoices = overdue_agg.get('total') or Decimal('0.00')
+            overdue_invoices_total = overdue_agg.get(
+                'total') or Decimal('0.00')
+
+            overdue_invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type="purchase", status="Pending", is_deleted=False, payment_due__isnull=False, payment_due__lt=today)
+
+            for invoice in overdue_invoices:
+                products_models.ActivityLog.objects.create(
+                    user=user,
+                    action="invoice_overdue",
+                    title="Invoice Reminder",
+                    description=f"invoice #{invoice.invoice_number} due soon",
+                    extra_data={
+                        "invoice_id": invoice.invoice_id,
+                        "amount": float(invoice.total),
+                    },
+                )
+
+                invoice.status = "Overdue"
+                invoice.save()
+
+            recent_logs = products_models.ActivityLog.objects.filter(
+                user=user).order_by('-created_at')[:5]
+
+            recent_logs_serializer = products_serializer.ActivityLogSerializer(
+                recent_logs, many=True).data
 
             # Expenses: no Expense model present in this project; return 0.00 for now.
             expenses = Decimal('0.00')
@@ -2081,10 +2133,170 @@ class HomePageView(APIView):
                 "profit": str(profit),
                 "expenses": str(expenses),
                 "pending_payments": str(pending_payments),
-                "overdue_invoices": str(overdue_invoices),
+                "overdue_invoices": str(overdue_invoices_total),
+                "recent_logs": recent_logs_serializer,
             }
 
             return Response({"success": True, "message": "Home page totals fetched", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UpdateInvoiceStatus(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Update Invoice Status",
+        operation_description="Update the status of an invoice for the authenticated user.",
+        tags=['Invoices'],
+        manual_parameters=[
+            openapi.Parameter(
+                name='invoice_id',
+                in_=openapi.IN_PATH,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description='ID of the invoice to update'
+            ),
+            openapi.Parameter(
+                name='status',
+                in_=openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description='New status for the invoice'
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Invoice status updated successfully",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Invoice status updated successfully"
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad Request",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Missing or invalid parameters"
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Invoice not found",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Invoice not found"
+                    }
+                }
+            ),
+        }
+    )
+    def get(self, request, invoice_id):
+        try:
+            user = request.user
+            status_value = request.query_params.get('status')
+
+            if users_utils.is_required(invoice_id):
+                return Response({"success": False, "message": "Invoice ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(status_value):
+                return Response({"success": False, "message": "Status is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            invoice = products_models.Invoice.objects.filter(
+                invoice_id=invoice_id, user=user, is_deleted=False).first()
+
+            if not invoice:
+                return Response({"success": False, "message": "Invoice not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            invoice.status = status_value
+            invoice.save()
+
+            return Response({"success": True, "message": "Invoice status updated successfully"}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UpdateOrderStatus(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Update Order Status",
+        operation_description="Update the status of an order for the authenticated user.",
+        tags=["Purchase Orders"],
+        manual_parameters=[
+            openapi.Parameter(
+                name="order_id",
+                in_=openapi.IN_PATH,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="Order ID of the purchase order"
+            ),
+            openapi.Parameter(
+                name="status",
+                in_=openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="New status value for the order"
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Order status updated successfully",
+                examples={
+                    "application/json": {
+                        "success": True,
+                        "message": "Order status updated successfully"
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Bad Request",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Missing or invalid parameters"
+                    }
+                }
+            ),
+            404: openapi.Response(
+                description="Order not found",
+                examples={
+                    "application/json": {
+                        "success": False,
+                        "message": "Order not found"
+                    }
+                }
+            ),
+        }
+    )
+    def get(self, request, order_id):
+        try:
+            user = request.user
+            status_value = request.query_params.get('status')
+
+            if users_utils.is_required(order_id):
+                return Response({"success": False, "message": "Order ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(status_value):
+                return Response({"success": False, "message": "Status is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            invoice = products_models.PurchaseOrders.objects.filter(
+                order_id=order_id, user=user, is_deleted=False).first()
+
+            if not invoice:
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            invoice.order_status = status_value
+            invoice.save()
+
+            return Response({"success": True, "message": "Order status updated successfully"}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

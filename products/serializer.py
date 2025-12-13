@@ -132,3 +132,13 @@ class InvoiceDetailsSerializer(serializers.ModelSerializer):
         fields = [
             'invoice_id', 'invoice_number', 'issue_date', 'payment_due',
             'subtotal', 'tax', 'discount', 'total', 'notes', 'payment_method', 'client', 'invoice_items', 'invoice_type']
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+
+    user_name = serializers.ReadOnlyField(source='user.fullname')
+
+    class Meta:
+        model = products_models.ActivityLog
+        fields = ['id', 'user', 'user_name', 'action',
+                  'timestamp', 'title', 'description', 'extra_data']

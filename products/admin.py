@@ -78,3 +78,13 @@ class InvoiceItemsAdmin(admin.ModelAdmin):
 
 
 admin.site.register(products_models.InvoiceItems, InvoiceItemsAdmin)
+
+
+class ActivityLogAdmin(admin.ModelAdmin):
+    list_display = ('user', 'action', 'timestamp', 'title')
+    search_fields = ['user__fullname', 'user__email', 'action', 'title']
+    list_per_page = 20
+    list_filter = ('action',)
+
+
+admin.site.register(products_models.ActivityLog, ActivityLogAdmin)

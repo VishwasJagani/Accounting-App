@@ -4,6 +4,7 @@ from decimal import Decimal
 from drf_yasg import openapi
 from django.db.models import Q, Sum
 from django.utils import timezone
+from datetime import timedelta
 from drf_yasg.utils import swagger_auto_schema
 from django.contrib.auth.hashers import check_password
 
@@ -1969,6 +1970,126 @@ class GetInfoFromGSTNumber(APIView):
                 return Response({"success": False, "message": "No company found for the provided GST number."}, status=status.HTTP_404_NOT_FOUND)
 
             return Response({"success": True, "message": "Company details fetched successfully.", "data": company_info.get('data')}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ReportsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserExpenseList(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = CustomPagination
+    serializer_class = users_serializer.UserExpenseSerializer
+
+    def get_queryset(self):
+
+        expenses = users_models.UserExpense.objects.filter(
+            user=self.request.user).order_by('-created_at')
+
+        return expenses
+
+    def get(self, request):
+        try:
+            queryset = self.get_queryset()
+
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(queryset, request)
+
+            serializer = self.serializer_class(result_page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddUserExpense(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.UserExpenseSerializer
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            expense_name = data.get('expense_name')
+            amount = data.get('amount')
+            category = data.get('category')
+            expense_date = data.get('expense_date')
+
+            if users_utils.is_required(expense_name):
+                return Response({"success": False, "message": "Expense name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(amount):
+                return Response({"success": False, "message": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(category):
+                return Response({"success": False, "message": "Category is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(expense_date):
+                return Response({"success": False, "message": "Expense Date is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['user'] = user.user_id
+            serializer = self.serializer_class(data=data)
+
+            if serializer.is_valid():
+                expense_data = serializer.save()
+
+                return Response({"success": True, "message": "Expense Added", "data": self.serializer_class(expense_data).data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExpenseReportPage(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            expenses = users_models.UserExpense.objects.filter(
+                user=user).order_by('-created_at')
+            
+            # prepare date ranges
+            today = timezone.localdate()
+            yesterday = today - timedelta(days=1)
+            week_ago = today - timedelta(days=7)
+
+            # Querysets for each range (exclude overlaps)
+            today_qs = expenses.filter(expense_date=today)
+            yesterday_qs = expenses.filter(expense_date=yesterday)
+            # this_week: last 7 days excluding today and yesterday
+            this_week_qs = expenses.filter(expense_date__gte=week_ago, expense_date__lt=yesterday)
+
+            # Serialize results
+            today_ser = users_serializer.UserExpenseSerializer(today_qs, many=True).data
+            yesterday_ser = users_serializer.UserExpenseSerializer(yesterday_qs, many=True).data
+            this_week_ser = users_serializer.UserExpenseSerializer(this_week_qs, many=True).data
+
+            # compute totals for each group
+            today_total = today_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            yesterday_total = yesterday_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            this_week_total = this_week_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+            recent_expenses = {
+                "today": {"items": today_ser, "total": int(today_total)},
+                "yesterday": {"items": yesterday_ser, "total": int(yesterday_total)},
+                "this_week": {"items": this_week_ser, "total": int(this_week_total)},
+            }
+
+            return Response({"success": True, "message": "Recent expenses fetched successfully.", "data": {"recent_expenses": recent_expenses}}, status=status.HTTP_200_OK)
+
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
