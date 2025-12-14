@@ -24,7 +24,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     class Meta:
         model = products_models.Products
         fields = ['product_id', 'name', 'category',
-                  'category_name', 'item_sku', 'product_image', 'stock_level', 'final_price', 'quantity', 'is_active']
+                  'category_name', 'item_sku', 'product_image', 'stock_level', 'final_price', 'quantity', 'selling_price', 'weight', 'gst_category', 'unit_of_measurement', 'discount_percentage', 'tax', 'cost_price', 'is_active']
 
     def get_product_image(self, obj):
         if obj.product_image:

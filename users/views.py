@@ -2057,9 +2057,19 @@ class ExpenseReportPage(APIView):
     def get(self, request):
         try:
             user = request.user
+            search = request.query_params.get('search', '')
+            time = request.query_params.get('time', '')
 
             expenses = users_models.UserExpense.objects.filter(
                 user=user).order_by('-created_at')
+
+            if search:
+                expenses = expenses.filter(
+                    Q(expense_name__icontains=search) |
+                    Q(category__icontains=search) |
+                    Q(description__icontains=search)
+                )
+
             
             # prepare date ranges
             today = timezone.localdate()
@@ -2088,8 +2098,77 @@ class ExpenseReportPage(APIView):
                 "this_week": {"items": this_week_ser, "total": int(this_week_total)},
             }
 
-            return Response({"success": True, "message": "Recent expenses fetched successfully.", "data": {"recent_expenses": recent_expenses}}, status=status.HTTP_200_OK)
+            # Allow empty 'time' for all-time report, but validate if provided
+            if time and time not in ['this_week', 'this_month', 'last_month']:
+                return Response({"success": False, "message": "Invalid time parameter. Use 'this_week', 'this_month', or 'last_month'."}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Use the 'expenses' queryset which may have search filters applied
+            expense_pr = expenses
+
+            if time:
+                if time == 'this_week':
+                    # 'this_week' is defined as the last 7 days excluding today and yesterday
+                    expense_pr = expense_pr.filter(
+                        expense_date__gte=week_ago, expense_date__lt=yesterday)
+                    
+                elif time == 'this_month':
+                    expense_pr = expense_pr.filter(
+                        expense_date__year=today.year, expense_date__month=today.month)
+                
+                elif time == 'last_month':
+                    # Robustly calculate the date range for the previous month
+                    first_day_current_month = today.replace(day=1)
+                    last_day_last_month = first_day_current_month - timedelta(days=1)
+                    first_day_last_month = last_day_last_month.replace(day=1)
+                    expense_pr = expense_pr.filter(
+                        expense_date__gte=first_day_last_month, expense_date__lte=last_day_last_month)
+
+            # Calculate expense percentages by category
+            total_expense_amount = expense_pr.aggregate(
+                total=Sum('amount'))['total'] or Decimal('0.00')
+            expense_categories = [
+                "Food & Dining",
+                "Transport",
+                "Shopping",
+                "Bills",
+                "Entertainment"
+            ]
+            category_percentages = []
+
+            if total_expense_amount > Decimal('0.00'):
+                # Group by category and sum amounts from the correctly filtered queryset
+                category_totals = expense_pr.values(
+                    'category').annotate(total=Sum('amount'))
+
+                # Create a dictionary for quick lookup
+                totals_map = {item['category']: item['total']
+                              for item in category_totals}
+
+                main_categories_spent = Decimal('0.00')
+                for category in expense_categories:
+                    amount_spent = totals_map.get(category, Decimal('0.00'))
+                    percentage = (amount_spent / total_expense_amount) * 100
+                    category_percentages.append({
+                        'category': category,
+                        'percentage': round(percentage, 2)
+                    })
+                    main_categories_spent += amount_spent
+
+                # Calculate "Other" category for expenses not in the main list
+                other_spent = total_expense_amount - main_categories_spent
+                if other_spent > Decimal('0.00'):
+                    percentage = (other_spent / total_expense_amount) * 100
+                    category_percentages.append({
+                        'category': 'Other',
+                        'percentage': round(percentage, 2)
+                    })
+
+            response_data = {
+                "recent_expenses": recent_expenses,
+                "category_percentages": category_percentages
+            }
+
+            return Response({"success": True, "message": "Recent expenses fetched successfully.", "data": response_data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
