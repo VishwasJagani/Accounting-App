@@ -2,7 +2,7 @@
 import os
 from decimal import Decimal
 from drf_yasg import openapi
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, F, Count
 from django.utils import timezone
 from datetime import timedelta
 from drf_yasg.utils import swagger_auto_schema
@@ -1016,7 +1016,7 @@ class ClientDetailView(APIView):
                     total_invoiced = invoices.aggregate(
                         total=Sum('total')).get('total') or Decimal('0.00')
 
-                    paid_invoices = invoices.filter(status__iexact='paid')
+                    paid_invoices = invoices.filter(status__iexact='Paid')
                     total_paid = paid_invoices.aggregate(
                         total=Sum('total')).get('total') or Decimal('0.00')
 
@@ -1975,17 +1975,6 @@ class GetInfoFromGSTNumber(APIView):
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class ReportsView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        try:
-            user = request.user
-
-        except Exception as e:
-            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
 class UserExpenseList(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPagination
@@ -2070,27 +2059,52 @@ class ExpenseReportPage(APIView):
                     Q(description__icontains=search)
                 )
 
-            
             # prepare date ranges
             today = timezone.localdate()
             yesterday = today - timedelta(days=1)
             week_ago = today - timedelta(days=7)
 
+            if time:
+                if time == 'this_week':
+                    # 'this_week' is defined as the last 7 days excluding today and yesterday
+                    expenses = expenses.filter(
+                        expense_date__gte=week_ago, expense_date__lt=yesterday)
+
+                elif time == 'this_month':
+                    expenses = expenses.filter(
+                        expense_date__year=today.year, expense_date__month=today.month)
+
+                elif time == 'last_month':
+                    # Robustly calculate the date range for the previous month
+                    first_day_current_month = today.replace(day=1)
+                    last_day_last_month = first_day_current_month - \
+                        timedelta(days=1)
+                    first_day_last_month = last_day_last_month.replace(day=1)
+                    expenses = expenses.filter(
+                        expense_date__gte=first_day_last_month, expense_date__lte=last_day_last_month)
+
             # Querysets for each range (exclude overlaps)
             today_qs = expenses.filter(expense_date=today)
             yesterday_qs = expenses.filter(expense_date=yesterday)
             # this_week: last 7 days excluding today and yesterday
-            this_week_qs = expenses.filter(expense_date__gte=week_ago, expense_date__lt=yesterday)
+            this_week_qs = expenses.filter(
+                expense_date__gte=week_ago, expense_date__lt=yesterday)
 
             # Serialize results
-            today_ser = users_serializer.UserExpenseSerializer(today_qs, many=True).data
-            yesterday_ser = users_serializer.UserExpenseSerializer(yesterday_qs, many=True).data
-            this_week_ser = users_serializer.UserExpenseSerializer(this_week_qs, many=True).data
+            today_ser = users_serializer.UserExpenseSerializer(
+                today_qs, many=True).data
+            yesterday_ser = users_serializer.UserExpenseSerializer(
+                yesterday_qs, many=True).data
+            this_week_ser = users_serializer.UserExpenseSerializer(
+                this_week_qs, many=True).data
 
             # compute totals for each group
-            today_total = today_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-            yesterday_total = yesterday_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-            this_week_total = this_week_qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            today_total = today_qs.aggregate(total=Sum('amount'))[
+                'total'] or Decimal('0.00')
+            yesterday_total = yesterday_qs.aggregate(total=Sum('amount'))[
+                'total'] or Decimal('0.00')
+            this_week_total = this_week_qs.aggregate(total=Sum('amount'))[
+                'total'] or Decimal('0.00')
 
             recent_expenses = {
                 "today": {"items": today_ser, "total": int(today_total)},
@@ -2104,24 +2118,6 @@ class ExpenseReportPage(APIView):
 
             # Use the 'expenses' queryset which may have search filters applied
             expense_pr = expenses
-
-            if time:
-                if time == 'this_week':
-                    # 'this_week' is defined as the last 7 days excluding today and yesterday
-                    expense_pr = expense_pr.filter(
-                        expense_date__gte=week_ago, expense_date__lt=yesterday)
-                    
-                elif time == 'this_month':
-                    expense_pr = expense_pr.filter(
-                        expense_date__year=today.year, expense_date__month=today.month)
-                
-                elif time == 'last_month':
-                    # Robustly calculate the date range for the previous month
-                    first_day_current_month = today.replace(day=1)
-                    last_day_last_month = first_day_current_month - timedelta(days=1)
-                    first_day_last_month = last_day_last_month.replace(day=1)
-                    expense_pr = expense_pr.filter(
-                        expense_date__gte=first_day_last_month, expense_date__lte=last_day_last_month)
 
             # Calculate expense percentages by category
             total_expense_amount = expense_pr.aggregate(
@@ -2163,12 +2159,469 @@ class ExpenseReportPage(APIView):
                         'percentage': round(percentage, 2)
                     })
 
+            # Compute last calendar month's date range
+            first_day_current_month = today.replace(day=1)
+            last_day_last_month = first_day_current_month - timedelta(days=1)
+            first_day_last_month = last_day_last_month.replace(day=1)
+
+            # Build queryset for last month and apply same search filters
+            last_month_qs = users_models.UserExpense.objects.filter(
+                user=user,
+                expense_date__gte=first_day_last_month,
+                expense_date__lte=last_day_last_month,
+            )
+
+            if search:
+                last_month_qs = last_month_qs.filter(
+                    Q(expense_name__icontains=search) |
+                    Q(category__icontains=search) |
+                    Q(description__icontains=search)
+                )
+
+            last_month_total = last_month_qs.aggregate(total=Sum('amount'))[
+                'total'] or Decimal('0.00')
+
+            # total_expense_amount is the total for the current filtered period (could be this_month, this_week, last_month, or all-time)
+            current_total = total_expense_amount
+
+            # Calculate percentage change vs last month. If last month total is zero, set percentage_change to None
+            if last_month_total > Decimal('0.00'):
+                percentage_change = round(
+                    ((current_total - last_month_total) / last_month_total) * 100, 2)
+            else:
+                percentage_change = 0
+
             response_data = {
                 "recent_expenses": recent_expenses,
-                "category_percentages": category_percentages
+                "category_percentages": category_percentages,
+                "total_spent": users_models.UserExpense.objects.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
+                "compare_to_last_month": {
+                    "last_month_total": int(last_month_total),
+                    "percentage_change": percentage_change,
+                }
             }
 
             return Response({"success": True, "message": "Recent expenses fetched successfully.", "data": response_data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StatisticsPageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type="sales")
+
+            if start_date:
+                invoices = invoices.filter(issue_date__gte=start_date)
+            if end_date:
+                invoices = invoices.filter(issue_date__lte=end_date)
+
+            paid_invoices = invoices.filter(status="Paid")
+
+            total_revenue = paid_invoices.aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
+
+            pending_amount = invoices.filter(status="Pending").aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
+
+            expenses = users_models.UserExpense.objects.filter(user=user)
+            if start_date:
+                expenses = expenses.filter(expense_date__gte=start_date)
+            if end_date:
+                expenses = expenses.filter(expense_date__lte=end_date)
+
+            total_expense = expenses.aggregate(
+                total=Sum('amount'))['total'] or Decimal('0.00')
+
+            # COGS
+            cogs = products_models.InvoiceItems.objects.filter(
+                invoice__in=paid_invoices
+            ).aggregate(
+                total_cogs=Sum(F('qty') * F('product__cost_price'))
+            )['total_cogs'] or Decimal('0.00')
+
+            gross_profit = total_revenue - cogs
+            operating_expense = total_expense
+            ebitda = gross_profit - operating_expense
+            net_profit = ebitda
+
+            # Cash Flow
+            purchases = products_models.Invoice.objects.filter(
+                user=user, invoice_type="purchase", status="Paid"
+            )
+
+            if start_date:
+                purchases = purchases.filter(issue_date__gte=start_date)
+            if end_date:
+                purchases = purchases.filter(issue_date__lte=end_date)
+
+            paid_purchases = purchases.aggregate(total=Sum('total'))[
+                'total'] or Decimal('0.00')
+
+            cash_flow = total_revenue - (total_expense + paid_purchases)
+
+            # ROI
+            total_investment = cogs + total_expense
+            if total_investment > Decimal('0.00'):
+                roi = (net_profit / total_investment) * 100
+            else:
+                roi = Decimal('0.00')
+
+            data = {
+                "total_revenue": total_revenue,
+                "total_expense": total_expense,
+                "net_profit": net_profit,
+                "pending_amount": pending_amount,
+                "gross_profit": gross_profit,
+                "operating_expense": operating_expense,
+                "ebitda": ebitda,
+                "cash_flow": cash_flow,
+                "roi": round(roi, 2),
+            }
+
+            return Response({"success": True, "message": "Statistics page data fetched successfully.", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SalesByClientReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type="sales", is_deleted=False)
+
+            if start_date:
+                invoices = invoices.filter(issue_date__gte=start_date)
+            if end_date:
+                invoices = invoices.filter(issue_date__lte=end_date)
+
+            total_revenue = invoices.filter(status="Paid").aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
+
+            clients_sales = invoices.values(
+                'client__client_id', 'client__client_name', 'client__email', 'client__phone_number'
+            ).annotate(
+                total_sales=Sum('total'),
+                paid_amount=Sum('total', filter=Q(status="Paid")),
+                order_count=Count('invoice_id')
+            ).order_by('-total_sales')
+
+            top_clients = []
+            for item in clients_sales:
+                if item['client__client_id']:
+                    total_sales = item['total_sales'] or Decimal('0.00')
+                    paid_amount = item['paid_amount'] or Decimal('0.00')
+                    top_clients.append({
+                        "client_id": item['client__client_id'],
+                        "client_name": item['client__client_name'],
+                        "email": item['client__email'],
+                        "phone_number": item['client__phone_number'],
+                        "total_sales": total_sales,
+                        "paid_amount": paid_amount,
+                        "outstanding_amount": total_sales - paid_amount,
+                        "order_count": item['order_count']
+                    })
+
+            data = {
+                "total_revenue": total_revenue,
+                "top_clients": top_clients
+            }
+
+            return Response({"success": True, "message": "Sales by client report fetched successfully.", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SalesByProductView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            search = request.query_params.get('search')
+            time_frame = request.query_params.get('time_frame')
+
+            filters = Q(
+                invoice__user=user,
+                invoice__invoice_type="sales",
+                invoice__is_deleted=False,
+                product__is_deleted=False
+            )
+
+            if time_frame:
+                if time_frame not in ['this_week', 'this_month', 'last_month']:
+                    return Response({"success": False, "message": "Invalid time_frame parameter. Use 'this_week', 'this_month', or 'last_month'."}, status=status.HTTP_400_BAD_REQUEST)
+
+                today = timezone.localdate()
+                if time_frame == 'this_week':
+                    week_ago = today - timedelta(days=7)
+                    filters &= Q(invoice__issue_date__gte=week_ago,
+                                 invoice__issue_date__lt=today)
+                elif time_frame == 'this_month':
+                    filters &= Q(invoice__issue_date__year=today.year,
+                                 invoice__issue_date__month=today.month)
+                elif time_frame == 'last_month':
+                    first_day_current_month = today.replace(day=1)
+                    last_day_last_month = first_day_current_month - \
+                        timedelta(days=1)
+                    first_day_last_month = last_day_last_month.replace(day=1)
+                    filters &= Q(invoice__issue_date__gte=first_day_last_month,
+                                 invoice__issue_date__lte=last_day_last_month)
+
+            elif start_date or end_date:
+                if start_date:
+                    filters &= Q(invoice__issue_date__gte=start_date)
+                if end_date:
+                    filters &= Q(invoice__issue_date__lte=end_date)
+
+            if search:
+                filters &= Q(product__name__icontains=search)
+
+            sales_data = products_models.InvoiceItems.objects.filter(filters).values(
+                'product__product_id',
+                'product__name',
+                'product__category__category_name'
+            ).annotate(
+                total_quantity_sold=Sum('qty'),
+                total_revenue=Sum(F('qty') * F('price'))
+            ).order_by('-total_revenue')
+
+            product_sales = []
+            for item in sales_data:
+                product_sales.append({
+                    "product_id": item['product__product_id'],
+                    "product_name": item['product__name'],
+                    "category": item['product__category__category_name'],
+                    "total_quantity_sold": item['total_quantity_sold'] or 0,
+                    "total_revenue": item['total_revenue'] or Decimal('0.00'),
+                })
+
+            return Response({"success": True, "message": "Sales by product report fetched successfully.", "data": product_sales}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SalesByDateRange(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            search = request.query_params.get('search')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            customer = request.query_params.get('customer')
+            product = request.query_params.get('product')
+
+            filters = Q(
+                invoice__user=user,
+                invoice__invoice_type="sales",
+                invoice__is_deleted=False,
+                product__is_deleted=False
+            )
+
+            if start_date or end_date:
+                if start_date:
+                    filters &= Q(invoice__issue_date__gte=start_date)
+                if end_date:
+                    filters &= Q(invoice__issue_date__lte=end_date)
+
+            if search:
+                filters &= Q(product__name__icontains=search)
+
+            if customer:
+                filters &= Q(invoice__client__client_id=customer)
+
+            if product:
+                filters &= Q(product__product_id=product)
+
+            sales_data = products_models.InvoiceItems.objects.filter(filters).aggregate(
+                total_quantity_sold=Sum('qty'),
+                total_sales=Sum(F('qty') * F('price')),
+                total_tax=Sum('tax'),
+                total_discount=Sum('discount_amount')
+            )
+
+            total_sales = sales_data.get('total_sales') or Decimal('0.00')
+            total_tax = sales_data.get('total_tax') or Decimal('0.00')
+            total_discount = sales_data.get(
+                'total_discount') or Decimal('0.00')
+            total_quantity_sold = sales_data.get('total_quantity_sold') or 0
+
+            net_sales = total_sales - total_discount
+
+            invoice_items = products_models.InvoiceItems.objects.filter(filters).select_related(
+                'invoice', 'invoice__client', 'product'
+            ).order_by('-invoice__issue_date')
+
+            details = []
+            for item in invoice_items:
+                details.append({
+                    "invoice_number": item.invoice.invoice_number,
+                    "date": item.invoice.issue_date,
+                    "customer_name": item.invoice.client.client_name if item.invoice.client else "",
+                    "item_name": item.product.name if item.product else "",
+                    "quantity": item.qty,
+                    "price": item.price,
+                    "total": (item.qty * item.price) if item.qty and item.price else 0
+                })
+
+            data = {
+                "total_sales": total_sales,
+                "total_tax": total_tax,
+                "total_discount": total_discount,
+                "net_sales": net_sales,
+                "total_quantity_sold": total_quantity_sold,
+                "details": details
+            }
+
+            return Response({"success": True, "message": "Sales by date range fetched successfully.", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SalesSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            time_frame = request.query_params.get('time_frame')
+
+            sales_data = products_models.InvoiceItems.objects.filter(
+                invoice__user=user,
+                invoice__invoice_type="sales",
+                invoice__is_deleted=False,
+                product__is_deleted=False
+            )
+
+            invoices = products_models.Invoice.objects.filter(
+                user=user,
+                invoice_type="sales",
+                is_deleted=False
+            )
+
+            if time_frame:
+                today = timezone.localdate()
+                if time_frame == 'this_week':
+                    week_ago = today - timedelta(days=7)
+                    sales_data = sales_data.filter(
+                        invoice__issue_date__gte=week_ago,
+                        invoice__issue_date__lt=today
+                    )
+                    invoices = invoices.filter(
+                        issue_date__gte=week_ago,
+                        issue_date__lt=today
+                    )
+                elif time_frame == 'this_month':
+                    sales_data = sales_data.filter(
+                        invoice__issue_date__year=today.year,
+                        invoice__issue_date__month=today.month
+                    )
+                    invoices = invoices.filter(
+                        issue_date__year=today.year,
+                        issue_date__month=today.month
+                    )
+                elif time_frame == 'last_month':
+                    first_day_current_month = today.replace(day=1)
+                    last_day_last_month = first_day_current_month - \
+                        timedelta(days=1)
+                    first_day_last_month = last_day_last_month.replace(day=1)
+
+            total_sales = sales_data.aggregate(
+                total_sales=Sum(F('qty') * F('price'))
+            )['total_sales'] or Decimal('0.00')
+
+            total_orders = invoices.count()
+            avg_order_value = Decimal('0.00')
+            if total_orders > 0:
+                avg_order_value = invoices.aggregate(
+                    avg_value=Sum('total') / total_orders)['avg_value'] or Decimal('0.00')
+
+            # Aggregate totals by product category name
+            category_totals = sales_data.values('product__category__category_name').annotate(
+                total=Sum(F('qty') * F('price'))
+            )
+
+            # Map raw category names into predefined buckets
+            buckets = {
+                'Electronics': Decimal('0.00'),
+                'Clothing': Decimal('0.00'),
+                'Home & Garden': Decimal('0.00'),
+                'Book': Decimal('0.00'),
+                'Other': Decimal('0.00'),
+            }
+
+            for item in category_totals:
+                cname = (item.get('product__category__category_name')
+                         or '').lower()
+                total = item.get('total') or Decimal('0.00')
+
+                if 'elect' in cname or 'gadget' in cname or 'phone' in cname or 'laptop' in cname:
+                    buckets['Electronics'] += total
+                elif 'cloth' in cname or 'apparel' in cname or 'fashion' in cname:
+                    buckets['Clothing'] += total
+                elif 'home' in cname or 'garden' in cname or 'furnitur' in cname or 'appliance' in cname:
+                    buckets['Home & Garden'] += total
+                elif 'book' in cname or 'books' in cname:
+                    buckets['Book'] += total
+                else:
+                    buckets['Other'] += total
+
+            sales_by_category = [
+                {'category': k, 'total_sales': round(v, 2)} for k, v in buckets.items()
+            ]
+
+            # Recent sales: latest invoices (use issue_date then created_at)
+            recent_invoices_qs = products_models.Invoice.objects.filter(
+                user=user,
+                invoice_type="sales",
+                is_deleted=False
+            ).order_by('-issue_date', '-created_at')[:5]
+
+            recent_sales = []
+            for inv in recent_invoices_qs:
+                recent_sales.append({
+                    'invoice_number': inv.invoice_number,
+                    'date': inv.issue_date,
+                    'client_name': inv.client.client_name if inv.client else "",
+                    'total_amount': inv.total or Decimal('0.00'),
+                    'status': inv.status or "",
+                })
+
+            data = {
+                "total_sales": total_sales,
+                "total_orders": total_orders,
+                "avg_order_value": round(avg_order_value, 2),
+                "sales_by_category": sales_by_category,
+                "recent_sales": recent_sales,
+            }
+
+            return Response({"success": True, "message": "Sales summary fetched successfully.", "data": data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

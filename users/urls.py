@@ -41,13 +41,23 @@ urlpatterns = [
     path('get-info-from-gst-number/', users_views.GetInfoFromGSTNumber.as_view(),
          name="get-info-from-gst-number"),
 
-    path('reports/', users_views.ReportsView.as_view(),
-         name="reports"),
-
     path('expense/', include([
          path('', users_views.UserExpenseList.as_view(), name="expense_list"),
          path('add/', users_views.AddUserExpense.as_view(), name="add_expense"),
-         path('report/', users_views.ExpenseReportPage.as_view(), name="expense_report"),
-         ]))
+         path('report/', users_views.ExpenseReportPage.as_view(),
+              name="expense_report"),
+         ])),
 
+    path('statistics-page/', users_views.StatisticsPageView.as_view(),
+         name="statistics_page"),
+    path('reports/', include([
+         path('sales-by-client', users_views.SalesByClientReportView.as_view(),
+              name="sales-by-client-report"),
+         path('sales-by-product', users_views.SalesByProductView.as_view(),
+              name="sales-by-product-report"),
+         path('sales-by-date-range', users_views.SalesByDateRange.as_view(),
+              name="sales-by-product-report"),
+         path('sales-summary', users_views.SalesSummaryView.as_view(),
+              name="sales-summary"),
+         ])),
 ]
