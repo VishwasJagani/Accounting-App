@@ -4,7 +4,7 @@ from decimal import Decimal
 from drf_yasg import openapi
 from django.db.models import Q, Sum, F, Count
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 from drf_yasg.utils import swagger_auto_schema
 from django.contrib.auth.hashers import check_password
 
@@ -2622,6 +2622,635 @@ class SalesSummaryView(APIView):
             }
 
             return Response({"success": True, "message": "Sales summary fetched successfully.", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class OutstandingReceivables(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            client_id = request.query_params.get('client_id')
+            as_on_date_str = request.query_params.get('as_on_date')
+
+            as_of = timezone.now().date()
+            if as_on_date_str:
+                try:
+                    from datetime import datetime as _dt
+                    as_of = _dt.strptime(as_on_date_str, '%Y-%m-%d').date()
+                except Exception:
+                    return Response({"success": False, "message": "Invalid as_on_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type="sales", is_deleted=False
+            )
+
+            if client_id:
+                invoices = invoices.filter(client__client_id=client_id)
+
+            # consider invoices issued on or before the as_of date
+            invoices = invoices.filter(
+                issue_date__isnull=False, issue_date__lte=as_of)
+
+            # Outstanding invoices (not fully paid)
+            outstanding_qs = invoices.exclude(status__iexact="Paid")
+
+            total_outstanding = outstanding_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Overdue invoices: due date before today
+            overdue_qs = outstanding_qs.filter(payment_due__lt=as_of)
+            overdue_amount = overdue_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Number of distinct customers with dues
+            customers_with_dues = outstanding_qs.exclude(
+                client__isnull=True).values('client').distinct().count()
+
+            # Aging buckets
+            buckets = {
+                'Not due': Decimal('0.00'),
+                '0-30': Decimal('0.00'),
+                '31-60': Decimal('0.00'),
+                '61-90': Decimal('0.00'),
+                '90+': Decimal('0.00'),
+            }
+
+            for inv in outstanding_qs:
+                try:
+                    amt = inv.total or Decimal('0.00')
+                except Exception:
+                    amt = Decimal('0.00')
+
+                if not inv.payment_due:
+                    buckets['Not due'] += Decimal(amt)
+                else:
+                    days = (as_of - inv.payment_due).days
+                    if days <= 0:
+                        buckets['Not due'] += Decimal(amt)
+                    elif 1 <= days <= 30:
+                        buckets['0-30'] += Decimal(amt)
+                    elif 31 <= days <= 60:
+                        buckets['31-60'] += Decimal(amt)
+                    elif 61 <= days <= 90:
+                        buckets['61-90'] += Decimal(amt)
+                    else:
+                        buckets['90+'] += Decimal(amt)
+
+            aging = []
+            for k, v in buckets.items():
+                aging.append({"range": k, "amount": f"{v:.2f}"})
+
+            response = {
+                "total_outstanding": f"{Decimal(total_outstanding):.2f}",
+                "overdue_amount": f"{Decimal(overdue_amount):.2f}",
+                "customers_with_dues": customers_with_dues,
+                "aging": aging,
+                "detailed_report": [],
+            }
+
+            # Build detailed report rows
+            detailed = []
+            for inv in outstanding_qs.order_by('payment_due'):
+                client_name = ""
+                try:
+                    if inv.client:
+                        client_name = getattr(inv.client, 'client_name', '') or getattr(
+                            inv.client, 'email', '') or ''
+                except Exception:
+                    client_name = ""
+
+                amount = inv.total or Decimal('0.00')
+                # Since no Payment model exists, derive 'received' from invoice status
+                if (inv.status or '').lower() == 'paid':
+                    received = amount
+                else:
+                    received = Decimal('0.00')
+
+                balance = (Decimal(amount) - Decimal(received))
+
+                # aging relative to as_of
+                try:
+                    aging_days = (
+                        as_of - inv.payment_due).days if inv.payment_due else None
+                    aging_text = f"{aging_days} days" if aging_days is not None else 'N/A'
+                except Exception:
+                    aging_text = 'N/A'
+
+                detailed.append({
+                    "customer": client_name,
+                    "invoice_no": inv.invoice_number or str(inv.invoice_id),
+                    "invoice_date": inv.issue_date.strftime('%Y-%m-%d') if inv.issue_date else None,
+                    "due_date": inv.payment_due.strftime('%Y-%m-%d') if inv.payment_due else None,
+                    "amount": f"{amount:.2f}",
+                    "received": f"{received:.2f}",
+                    "balance": f"{balance:.2f}",
+                    "aging": aging_text
+                })
+
+            response['detailed_report'] = detailed
+
+            return Response({"success": True, "message": "Outstanding receivables fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PurchaseBySupplier(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            # Optional filters
+            search = request.query_params.get('search')
+            from_date = request.query_params.get('from_date')
+            to_date = request.query_params.get('to_date')
+
+            orders_qs = products_models.PurchaseOrders.objects.filter(
+                user=user, order_type="purchase", is_deleted=False
+            )
+
+            if search:
+                orders_qs = orders_qs.filter(
+                    Q(order_number__icontains=search) |
+                    Q(client__client_name__icontains=search) |
+                    Q(client__email__icontains=search)
+                )
+
+            if from_date:
+                try:
+                    fd = datetime.strptime(from_date, '%Y-%m-%d').date()
+                    orders_qs = orders_qs.filter(order_date__gte=fd)
+                except Exception:
+                    return Response({"success": False, "message": "Invalid from_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if to_date:
+                try:
+                    td = datetime.strptime(to_date, '%Y-%m-%d').date()
+                    orders_qs = orders_qs.filter(order_date__lte=td)
+                except Exception:
+                    return Response({"success": False, "message": "Invalid to_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Total purchase amount
+            total_purchase = orders_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Total items purchased across orders
+            total_items_agg = orders_qs.aggregate(
+                total_items=Sum('order_items__qty'))
+            total_items = int(total_items_agg.get('total_items') or 0)
+
+            # Detailed report rows
+            detailed = []
+            orders_prefetch = orders_qs.prefetch_related(
+                'order_items__product').order_by('-order_date')
+            for order in orders_prefetch:
+                supplier_name = ''
+                try:
+                    if order.client:
+                        supplier_name = getattr(order.client, 'client_name', '') or getattr(
+                            order.client, 'email', '') or ''
+                except Exception:
+                    supplier_name = ''
+
+                invoice_no = order.order_number or str(order.order_id)
+                order_date = order.order_date.strftime(
+                    '%Y-%m-%d') if order.order_date else None
+
+                for item in getattr(order, 'order_items').all():
+                    item_name = ''
+                    item_code = ''
+                    try:
+                        if item.product:
+                            item_name = getattr(item.product, 'name', '') or ''
+                            item_code = getattr(
+                                item.product, 'item_sku', '') or ''
+                    except Exception:
+                        pass
+
+                    qty = item.qty or 0
+                    rate = item.price or Decimal('0.00')
+                    line_total = (Decimal(qty) * Decimal(rate))
+
+                    detailed.append({
+                        'supplier': supplier_name,
+                        'invoice_no': invoice_no,
+                        'date': order_date,
+                        'item_name': item_name,
+                        'item_code': item_code,
+                        'qty': qty,
+                        'rate': f"{Decimal(rate):.2f}",
+                        'total_amount': f"{line_total:.2f}",
+                    })
+
+            response = {
+                'total_purchase_amount': f"{Decimal(total_purchase):.2f}",
+                'total_items_purchased': total_items,
+                'detailed_report': detailed,
+            }
+
+            return Response({"success": True, "message": "Purchase by supplier fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class OutstandingPayables(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            vendor_id = request.query_params.get(
+                'vendor_id') or request.query_params.get('supplier_id')
+            status_filter = request.query_params.get(
+                'status')  # overdue | due_soon | upcoming | all
+            search = request.query_params.get('search')
+            as_on_date_str = request.query_params.get('as_on_date')
+            due_soon_days = request.query_params.get('due_soon_days')
+
+            as_of = timezone.now().date()
+            if as_on_date_str:
+                try:
+                    as_of = datetime.strptime(
+                        as_on_date_str, '%Y-%m-%d').date()
+                except Exception:
+                    return Response({"success": False, "message": "Invalid as_on_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                due_soon_days = int(
+                    due_soon_days) if due_soon_days is not None else 7
+            except Exception:
+                due_soon_days = 7
+
+            invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type="purchase", is_deleted=False)
+
+            # vendor filter
+            if vendor_id:
+                invoices = invoices.filter(client__client_id=vendor_id)
+
+            # search filter (invoice number or vendor name/email)
+            if search:
+                invoices = invoices.filter(
+                    Q(invoice_number__icontains=search) |
+                    Q(client__client_name__icontains=search) |
+                    Q(client__email__icontains=search)
+                )
+
+            # consider invoices issued on or before as_of
+            invoices = invoices.filter(
+                issue_date__isnull=False, issue_date__lte=as_of)
+
+            # Outstanding (not paid)
+            outstanding_qs = invoices.exclude(status__iexact='Paid')
+
+            # apply status filter if provided
+            due_soon_until = as_of + timedelta(days=due_soon_days)
+            if status_filter:
+                sf = (status_filter or '').lower()
+                if sf == 'overdue':
+                    outstanding_qs = outstanding_qs.filter(
+                        payment_due__lt=as_of)
+                elif sf == 'due_soon':
+                    outstanding_qs = outstanding_qs.filter(
+                        payment_due__gte=as_of, payment_due__lte=due_soon_until)
+                elif sf == 'upcoming':
+                    outstanding_qs = outstanding_qs.filter(
+                        payment_due__gt=due_soon_until)
+                # 'all' or unknown -> no extra filtering
+
+            total_payable = outstanding_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Overdue: payment_due < as_of
+            overdue_qs = outstanding_qs.filter(payment_due__lt=as_of)
+            overdue_amount = overdue_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Due soon: payment_due between as_of and as_of + due_soon_days
+            due_soon_qs = outstanding_qs.filter(
+                payment_due__gte=as_of, payment_due__lte=due_soon_until)
+            due_soon_amount = due_soon_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Aging buckets
+            buckets = {
+                'Not due': Decimal('0.00'),
+                '0-30': Decimal('0.00'),
+                '31-60': Decimal('0.00'),
+                '61-90': Decimal('0.00'),
+                '90+': Decimal('0.00'),
+            }
+
+            for inv in outstanding_qs:
+                try:
+                    amt = inv.total or Decimal('0.00')
+                except Exception:
+                    amt = Decimal('0.00')
+
+                if not inv.payment_due:
+                    buckets['Not due'] += Decimal(amt)
+                else:
+                    days = (as_of - inv.payment_due).days
+                    if days <= 0:
+                        buckets['Not due'] += Decimal(amt)
+                    elif 1 <= days <= 30:
+                        buckets['0-30'] += Decimal(amt)
+                    elif 31 <= days <= 60:
+                        buckets['31-60'] += Decimal(amt)
+                    elif 61 <= days <= 90:
+                        buckets['61-90'] += Decimal(amt)
+                    else:
+                        buckets['90+'] += Decimal(amt)
+
+            aging = [{"range": k, "amount": f"{v:.2f}"}
+                     for k, v in buckets.items()]
+
+            # Detailed report
+            detailed = []
+            for inv in outstanding_qs.order_by('payment_due'):
+                vendor = ''
+                try:
+                    if inv.client:
+                        vendor = getattr(inv.client, 'client_name', '') or getattr(
+                            inv.client, 'email', '') or ''
+                except Exception:
+                    vendor = ''
+
+                amount_owed = inv.total or Decimal('0.00')
+                status_text = inv.status or ''
+                try:
+                    aging_days = (
+                        as_of - inv.payment_due).days if inv.payment_due else None
+                    aging_text = f"{aging_days} days" if aging_days is not None else 'N/A'
+                except Exception:
+                    aging_text = 'N/A'
+
+                detailed.append({
+                    'vendor_name': vendor,
+                    'bill_no': inv.invoice_number or str(inv.invoice_id),
+                    'bill_date': inv.issue_date.strftime('%Y-%m-%d') if inv.issue_date else None,
+                    'due_date': inv.payment_due.strftime('%Y-%m-%d') if inv.payment_due else None,
+                    'amount_owed': f"{amount_owed:.2f}",
+                    'status': status_text,
+                    'aging': aging_text,
+                })
+
+            # Grand totals across all purchase invoices (not only filtered)
+            grand_total_payables = products_models.Invoice.objects.filter(
+                user=user, invoice_type='purchase', is_deleted=False).aggregate(total=Sum('total')).get('total') or Decimal('0.00')
+            grand_total_overdue = products_models.Invoice.objects.filter(
+                user=user, invoice_type='purchase', is_deleted=False, payment_due__lt=as_of).aggregate(total=Sum('total')).get('total') or Decimal('0.00')
+
+            response = {
+                'total_payable': f"{Decimal(total_payable):.2f}",
+                'overdue_amount': f"{Decimal(overdue_amount):.2f}",
+                'due_soon_amount': f"{Decimal(due_soon_amount):.2f}",
+                'aging': aging,
+                'detailed_report': detailed,
+                'grand_total_payables': f"{Decimal(grand_total_payables):.2f}",
+                'grand_total_overdue': f"{Decimal(grand_total_overdue):.2f}",
+            }
+
+            return Response({"success": True, "message": "Outstanding payables fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProfitAndLossReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            # date filters
+            from_date = request.query_params.get('from_date')
+            to_date = request.query_params.get('to_date')
+
+            from_date_obj = None
+            to_date_obj = None
+            try:
+                if from_date:
+                    from_date_obj = datetime.strptime(
+                        from_date, '%Y-%m-%d').date()
+                if to_date:
+                    to_date_obj = datetime.strptime(to_date, '%Y-%m-%d').date()
+            except Exception:
+                return Response({"success": False, "message": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Revenue: sum of sales invoices in period
+            invoices = products_models.Invoice.objects.filter(
+                user=user, invoice_type='sales', is_deleted=False)
+            if from_date_obj:
+                invoices = invoices.filter(issue_date__gte=from_date_obj)
+            if to_date_obj:
+                invoices = invoices.filter(issue_date__lte=to_date_obj)
+
+            sales_income = invoices.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Service revenue / other income: not explicitly tracked; default to 0.00
+            service_revenue = Decimal('0.00')
+            other_income = Decimal('0.00')
+
+            total_revenue = Decimal(
+                sales_income) + Decimal(service_revenue) + Decimal(other_income)
+
+            # COGS: opening stock and closing stock approximated from current product stock levels * cost_price
+            products_qs = products_models.Products.objects.filter(user=user)
+            opening_stock = Decimal('0.00')
+            closing_stock = Decimal('0.00')
+            for p in products_qs:
+                try:
+                    stock_level = Decimal(p.stock_level or 0)
+                    cost_price = Decimal(getattr(p, 'cost_price', 0) or 0)
+                    stock_value = stock_level * cost_price
+                except Exception:
+                    stock_value = Decimal('0.00')
+                opening_stock += stock_value
+                closing_stock += stock_value
+
+            # Purchases in period
+            purchases_qs = products_models.PurchaseOrders.objects.filter(
+                user=user, order_type='purchase', is_deleted=False)
+            if from_date_obj:
+                purchases_qs = purchases_qs.filter(
+                    order_date__gte=from_date_obj)
+            if to_date_obj:
+                purchases_qs = purchases_qs.filter(order_date__lte=to_date_obj)
+            purchases_total = purchases_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            total_cogs = Decimal(purchases_total) + \
+                Decimal(opening_stock) - Decimal(closing_stock)
+
+            gross_profit = Decimal(total_revenue) - Decimal(total_cogs)
+
+            # Operating expenses by category (rent, salaries, marketing, utilities)
+            expenses_qs = users_models.UserExpense.objects.filter(user=user)
+            if from_date_obj:
+                expenses_qs = expenses_qs.filter(
+                    expense_date__gte=from_date_obj)
+            if to_date_obj:
+                expenses_qs = expenses_qs.filter(expense_date__lte=to_date_obj)
+
+            rent = expenses_qs.filter(category__iexact='rent').aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+            salaries = expenses_qs.filter(category__iexact='salaries').aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+            marketing = expenses_qs.filter(category__iexact='marketing').aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+            utilities = expenses_qs.filter(category__iexact='utilities').aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+
+            total_operating_expense = Decimal(
+                rent) + Decimal(salaries) + Decimal(marketing) + Decimal(utilities)
+
+            net_profit = Decimal(gross_profit) - \
+                Decimal(total_operating_expense)
+
+            response = {
+                'sales_income': f"{Decimal(sales_income):.2f}",
+                'service_revenue': f"{Decimal(service_revenue):.2f}",
+                'other_income': f"{Decimal(other_income):.2f}",
+                'total_revenue': f"{Decimal(total_revenue):.2f}",
+                'opening_stock': f"{Decimal(opening_stock):.2f}",
+                'purchases': f"{Decimal(purchases_total):.2f}",
+                'closing_stock': f"{Decimal(closing_stock):.2f}",
+                'total_cogs': f"{Decimal(total_cogs):.2f}",
+                'gross_profit': f"{Decimal(gross_profit):.2f}",
+                'rent': f"{Decimal(rent):.2f}",
+                'salaries': f"{Decimal(salaries):.2f}",
+                'marketing': f"{Decimal(marketing):.2f}",
+                'utilities': f"{Decimal(utilities):.2f}",
+                'total_operating_expense': f"{Decimal(total_operating_expense):.2f}",
+                'net_profit': f"{Decimal(net_profit):.2f}",
+                'breakdown': [
+                    {"category": "Revenue",
+                        "amount": f"{Decimal(total_revenue):.2f}"},
+                    {"category": "COGS",
+                        "amount": f"{Decimal(total_cogs):.2f}"},
+                    {"category": "Expense",
+                        "amount": f"{Decimal(total_operating_expense):.2f}"},
+                    {"category": "Net Profit",
+                        "amount": f"{Decimal(net_profit):.2f}"},
+                ],
+            }
+
+            return Response({"success": True, "message": "Profit and Loss report fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CashFlowReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            # date filters
+            from_date = request.query_params.get('from_date')
+            to_date = request.query_params.get('to_date')
+
+            from_date_obj = None
+            to_date_obj = None
+            try:
+                if from_date:
+                    from_date_obj = datetime.strptime(
+                        from_date, '%Y-%m-%d').date()
+                if to_date:
+                    to_date_obj = datetime.strptime(to_date, '%Y-%m-%d').date()
+            except Exception:
+                return Response({"success": False, "message": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Cash from sales: sum of paid sales invoices within period
+            paid_sales_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type='sales', status__iexact='Paid', is_deleted=False)
+            if from_date_obj:
+                paid_sales_qs = paid_sales_qs.filter(
+                    issue_date__gte=from_date_obj)
+            if to_date_obj:
+                paid_sales_qs = paid_sales_qs.filter(
+                    issue_date__lte=to_date_obj)
+            cash_from_sales = paid_sales_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Payments to suppliers: sum of paid purchase invoices within period
+            paid_purchases_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type='purchase', status__iexact='Paid', is_deleted=False)
+            if from_date_obj:
+                paid_purchases_qs = paid_purchases_qs.filter(
+                    issue_date__gte=from_date_obj)
+            if to_date_obj:
+                paid_purchases_qs = paid_purchases_qs.filter(
+                    issue_date__lte=to_date_obj)
+            payments_to_suppliers = paid_purchases_qs.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
+            # Net cash from operating activities approximated: cash from sales - payments to suppliers - operating expenses (paid)
+            expenses_qs = users_models.UserExpense.objects.filter(user=user)
+            if from_date_obj:
+                expenses_qs = expenses_qs.filter(
+                    expense_date__gte=from_date_obj)
+            if to_date_obj:
+                expenses_qs = expenses_qs.filter(expense_date__lte=to_date_obj)
+            operating_expenses_paid = expenses_qs.aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+
+            net_cash_operating = Decimal(
+                cash_from_sales) - Decimal(payments_to_suppliers) - Decimal(operating_expenses_paid)
+
+            # Investing activities: models not present for equipment/investments -> accept query params or default to 0
+            purchase_of_equipment = Decimal(
+                request.query_params.get('purchase_of_equipment') or '0.00')
+            sales_of_investment = Decimal(
+                request.query_params.get('sales_of_investment') or '0.00')
+            net_cash_investing = Decimal(
+                sales_of_investment) - Decimal(purchase_of_equipment)
+
+            # Financing activities: accept query params for proceeds from loans and dividend payments
+            proceeds_from_loans = Decimal(
+                request.query_params.get('proceeds_from_loans') or '0.00')
+            dividend_payments = Decimal(
+                request.query_params.get('dividend_payments') or '0.00')
+            net_cash_financing = Decimal(
+                proceeds_from_loans) - Decimal(dividend_payments)
+
+            net_cash_flow = Decimal(
+                net_cash_operating) + Decimal(net_cash_investing) + Decimal(net_cash_financing)
+
+            response = {
+                'cash_from_sales': f"{Decimal(cash_from_sales):.2f}",
+                'payments_to_suppliers': f"{Decimal(payments_to_suppliers):.2f}",
+                'net_cash_operating_activities': f"{Decimal(net_cash_operating):.2f}",
+                'purchase_of_equipment': f"{Decimal(purchase_of_equipment):.2f}",
+                'sales_of_investment': f"{Decimal(sales_of_investment):.2f}",
+                'net_cash_investing_activities': f"{Decimal(net_cash_investing):.2f}",
+                'proceeds_from_loans': f"{Decimal(proceeds_from_loans):.2f}",
+                'dividend_payments': f"{Decimal(dividend_payments):.2f}",
+                'net_cash_financing_activities': f"{Decimal(net_cash_financing):.2f}",
+                'net_cash_flow': f"{Decimal(net_cash_flow):.2f}",
+                'breakdown': [
+                    {'category': 'Operating',
+                        'total': float(net_cash_operating)},
+                    {'category': 'Investing',
+                        'total': float(net_cash_investing)},
+                    {'category': 'Financing',
+                        'total': float(net_cash_financing)},
+                ],
+            }
+
+            return Response({"success": True, "message": "Cash flow report fetched.", "data": response}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
