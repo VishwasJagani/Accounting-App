@@ -1418,21 +1418,23 @@ class InvoiceListView(generics.ListAPIView):
             if invoice_type == "sales":
                 response_data.append({
                     'invoice_id': invoice.invoice_id,
-                    'client': invoice.client.client_name,
+                    'client_name': invoice.client.client_name,
                     'invoice_number': invoice.invoice_number,
                     'total_items': total_items,
                     'total_price': invoice.total,
                     'status': invoice.status,
+                    'created_at': invoice.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 })
 
             if invoice_type == "purchase":
                 response_data.append({
                     'invoice_id': invoice.invoice_id,
-                    'user': invoice.user.fullname,
+                    'supplier_name': invoice.user.fullname,
                     'invoice_number': invoice.invoice_number,
                     'total_items': total_items,
                     'total_price': invoice.total,
                     'status': invoice.status,
+                    'created_at': invoice.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 })
 
         return response_data

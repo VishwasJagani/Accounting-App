@@ -3,6 +3,7 @@ import os
 from decimal import Decimal
 from drf_yasg import openapi
 from django.db.models import Q, Sum, F, Count
+from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from datetime import timedelta, datetime
 from drf_yasg.utils import swagger_auto_schema
@@ -2339,9 +2340,62 @@ class SalesByClientReportView(APIView):
                         "order_count": item['order_count']
                     })
 
+            def _parse_date(s):
+                try:
+                    return datetime.fromisoformat(s).date()
+                except Exception:
+                    try:
+                        return datetime.strptime(s.split('T')[0], '%Y-%m-%d').date()
+                    except Exception:
+                        return None
+
+            start_dt = _parse_date(start_date) if start_date else None
+            end_dt = _parse_date(end_date) if end_date else None
+
+            today = datetime.now().date()
+            if not end_dt:
+                end_dt = today
+
+            def add_months(src_date, months):
+                year = src_date.year + (src_date.month - 1 + months) // 12
+                month = (src_date.month - 1 + months) % 12 + 1
+                return datetime(year, month, 1).date()
+
+            end_month = datetime(end_dt.year, end_dt.month, 1).date()
+            if start_dt:
+                start_month = datetime(start_dt.year, start_dt.month, 1).date()
+            else:
+                start_month = add_months(end_month, -11)
+
+            monthly_qs = invoices.filter(
+                issue_date__gte=start_month,
+                issue_date__lte=end_dt,
+                status="Paid"
+            ).annotate(month=TruncMonth('issue_date')).values('month').annotate(revenue=Sum('total')).order_by('month')
+
+            revenue_map = {}
+            for m in monthly_qs:
+                key = m.get('month')
+                if hasattr(key, 'date'):
+                    key = key.date()
+                revenue_map[key] = m.get('revenue') or Decimal('0.00')
+
+            labels = []
+            revenue_data = []
+            cur = start_month
+            while cur <= end_month:
+                labels.append(cur.strftime('%b'))
+                val = revenue_map.get(cur, Decimal('0.00'))
+                revenue_data.append(float(val))
+                cur = add_months(cur, 1)
+
             data = {
                 "total_revenue": total_revenue,
-                "top_clients": top_clients
+                "top_clients": top_clients,
+                "monthly_chart": {
+                    "labels": labels,
+                    "revenue": revenue_data
+                }
             }
 
             return Response({"success": True, "message": "Sales by client report fetched successfully.", "data": data}, status=status.HTTP_200_OK)
@@ -3254,3 +3308,403 @@ class CashFlowReportView(APIView):
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BalanceSheetView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            # Base querysets
+            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type="sales")
+            purchase_qs = products_models.Invoice.objects.filter(user=user, invoice_type="purchase")
+
+            if start_date:
+                sales_qs = sales_qs.filter(issue_date__gte=start_date)
+                purchase_qs = purchase_qs.filter(issue_date__gte=start_date)
+            if end_date:
+                sales_qs = sales_qs.filter(issue_date__lte=end_date)
+                purchase_qs = purchase_qs.filter(issue_date__lte=end_date)
+
+            # Paid and unpaid splits
+            paid_sales = sales_qs.filter(status__iexact="Paid")
+            paid_purchases = purchase_qs.filter(status__iexact="Paid")
+
+            # Cash (approximation): cash receipts - cash paid (paid purchases + expenses)
+            cash_in = paid_sales.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            cash_out_purchases = paid_purchases.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            total_expense = users_models.UserExpense.objects.filter(user=user).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            cash = Decimal(cash_in) - (Decimal(cash_out_purchases) + Decimal(total_expense))
+
+            # Inventory: sum(stock_level or quantity) * cost_price
+            inventory = Decimal('0.00')
+            products_qs = products_models.Products.objects.filter(user=user)
+            for p in products_qs:
+                qty = p.quantity if p.quantity is not None else (p.stock_level or 0)
+                cost = p.cost_price or Decimal('0.00')
+                try:
+                    inventory += Decimal(qty or 0) * Decimal(cost)
+                except Exception:
+                    pass
+
+            # Accounts receivable: unpaid sales invoices
+            accounts_receivable = sales_qs.exclude(status__iexact="Paid").aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+
+            # Fixed assets (PP&E) - accept via query param if no dedicated model
+            fixed_assets = Decimal(request.query_params.get('fixed_assets') or '0.00')
+
+            total_assets = Decimal(cash) + Decimal(inventory) + Decimal(accounts_receivable) + Decimal(fixed_assets)
+
+            # Liabilities
+            accounts_payable = purchase_qs.exclude(status__iexact="Paid").aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            short_term_debt = Decimal(request.query_params.get('short_term_debt') or '0.00')
+            long_term_loans = Decimal(request.query_params.get('long_term_loans') or '0.00')
+
+            # Equity
+            owners_capital = Decimal(request.query_params.get('owners_capital') or '0.00')
+
+            # Retained earnings (approx): cumulative profit = revenue - cogs - expenses
+            cogs = products_models.InvoiceItems.objects.filter(invoice__in=paid_sales).aggregate(total_cogs=Sum(F('qty') * F('product__cost_price')))['total_cogs'] or Decimal('0.00')
+            retained_earnings = Decimal(cash_in) - Decimal(cogs) - Decimal(total_expense)
+
+            total_equity = owners_capital + Decimal(retained_earnings)
+
+            total_liabilities_and_equity = Decimal(accounts_payable) + Decimal(short_term_debt) + Decimal(long_term_loans) + Decimal(total_equity)
+
+            data = {
+                'cash': f"{Decimal(cash):.2f}",
+                'inventory': f"{Decimal(inventory):.2f}",
+                'accounts_receivable': f"{Decimal(accounts_receivable):.2f}",
+                'fixed_assets': f"{Decimal(fixed_assets):.2f}",
+                'total_assets': f"{Decimal(total_assets):.2f}",
+                'accounts_payable': f"{Decimal(accounts_payable):.2f}",
+                'short_term_debt': f"{Decimal(short_term_debt):.2f}",
+                'long_term_loans': f"{Decimal(long_term_loans):.2f}",
+                'owners_capital': f"{Decimal(owners_capital):.2f}",
+                'retained_earnings': f"{Decimal(retained_earnings):.2f}",
+                'total_equity': f"{Decimal(total_equity):.2f}",
+                'total_liabilities_and_equity': f"{Decimal(total_liabilities_and_equity):.2f}",
+            }
+
+            return Response({"success": True, "message": "Balance sheet fetched.", "data": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)    
+    
+
+class TaxOnSalesReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type='sales', status__iexact='Paid', is_deleted=False)
+            if start_date:
+                sales_qs = sales_qs.filter(issue_date__gte=start_date)
+            if end_date:
+                sales_qs = sales_qs.filter(issue_date__lte=end_date)
+
+            total_tax_invoices = sales_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+            total_revenue = sales_qs.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+
+            items_qs = products_models.InvoiceItems.objects.filter(invoice__in=sales_qs)
+            total_tax_items = items_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+
+            # Determine total tax collected (prefer invoice.tax if present)
+            total_tax_collected = Decimal(total_tax_invoices) if Decimal(total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
+
+            tax_details = []
+
+            if total_tax_items and total_tax_items != Decimal('0.00'):
+                # Sum amounts by gst_category and ensure GST/VAT/Service Tax entries are always present
+                grouped = items_qs.values('gst_category').annotate(amount=Sum('tax'))
+                gst_amt = Decimal('0.00')
+                vat_amt = Decimal('0.00')
+                service_amt = Decimal('0.00')
+                other_entries = []
+                covered_amount = Decimal('0.00')
+                for g in grouped:
+                    try:
+                        rate = g.get('gst_category')
+                        amt = Decimal(g.get('amount') or Decimal('0.00'))
+                    except Exception:
+                        continue
+
+                    covered_amount += amt
+
+                    if rate is None:
+                        other_entries.append({"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
+                    else:
+                        try:
+                            r = Decimal(rate)
+                        except Exception:
+                            other_entries.append({"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
+                            continue
+
+                        if r == Decimal('5'):
+                            gst_amt += amt
+                        elif r == Decimal('10'):
+                            vat_amt += amt
+                        elif r == Decimal('2'):
+                            service_amt += amt
+                        else:
+                            other_entries.append({"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
+
+                # Always include GST, VAT, Service Tax entries (may be zero)
+                tax_details.append({"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
+                tax_details.append({"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
+                tax_details.append({"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
+
+                # Append other discovered rates
+                for e in other_entries:
+                    tax_details.append(e)
+
+                # If invoice-level tax exists beyond item-level tax, include it separately
+                invoice_level_extra = Decimal(total_tax_invoices) - covered_amount
+                if invoice_level_extra and invoice_level_extra > Decimal('0.00'):
+                    tax_details.append({"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
+
+            else:
+                # Fallback: estimate by applying fixed rates to revenue
+                gst_amt = (Decimal(total_revenue) * Decimal('0.05')).quantize(Decimal('0.01'))
+                vat_amt = (Decimal(total_revenue) * Decimal('0.10')).quantize(Decimal('0.01'))
+                service_amt = (Decimal(total_revenue) * Decimal('0.02')).quantize(Decimal('0.01'))
+                estimated_sum = gst_amt + vat_amt + service_amt
+                other_amt = Decimal('0.00')
+                if total_tax_collected and total_tax_collected > estimated_sum:
+                    other_amt = total_tax_collected - estimated_sum
+
+                tax_details = [
+                    {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"},
+                    {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"},
+                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"},
+                ]
+                if other_amt > 0:
+                    tax_details.append({"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
+
+            response = {
+                "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
+                "tax_details": tax_details
+            }
+
+            return Response({"success": True, "message": "Tax on sales report fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TaxOnPurchaseReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type='purchase', status__iexact='Paid', is_deleted=False)
+            if start_date:
+                sales_qs = sales_qs.filter(issue_date__gte=start_date)
+            if end_date:
+                sales_qs = sales_qs.filter(issue_date__lte=end_date)
+
+            total_tax_invoices = sales_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+            total_revenue = sales_qs.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+
+            items_qs = products_models.InvoiceItems.objects.filter(invoice__in=sales_qs)
+            total_tax_items = items_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+
+            # Determine total tax collected (prefer invoice.tax if present)
+            total_tax_collected = Decimal(total_tax_invoices) if Decimal(total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
+
+            tax_details = []
+
+            if total_tax_items and total_tax_items != Decimal('0.00'):
+                # Sum amounts by gst_category and ensure GST/VAT/Service Tax entries are always present
+                grouped = items_qs.values('gst_category').annotate(amount=Sum('tax'))
+                gst_amt = Decimal('0.00')
+                vat_amt = Decimal('0.00')
+                service_amt = Decimal('0.00')
+                other_entries = []
+                covered_amount = Decimal('0.00')
+                for g in grouped:
+                    try:
+                        rate = g.get('gst_category')
+                        amt = Decimal(g.get('amount') or Decimal('0.00'))
+                    except Exception:
+                        continue
+
+                    covered_amount += amt
+
+                    if rate is None:
+                        other_entries.append({"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
+                    else:
+                        try:
+                            r = Decimal(rate)
+                        except Exception:
+                            other_entries.append({"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
+                            continue
+
+                        if r == Decimal('5'):
+                            gst_amt += amt
+                        elif r == Decimal('10'):
+                            vat_amt += amt
+                        elif r == Decimal('2'):
+                            service_amt += amt
+                        else:
+                            other_entries.append({"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
+
+                # Always include GST, VAT, Service Tax entries (may be zero)
+                tax_details.append({"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
+                tax_details.append({"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
+                tax_details.append({"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
+
+                # Append other discovered rates
+                for e in other_entries:
+                    tax_details.append(e)
+
+                # If invoice-level tax exists beyond item-level tax, include it separately
+                invoice_level_extra = Decimal(total_tax_invoices) - covered_amount
+                if invoice_level_extra and invoice_level_extra > Decimal('0.00'):
+                    tax_details.append({"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
+
+            else:
+                # Fallback: estimate by applying fixed rates to revenue
+                gst_amt = (Decimal(total_revenue) * Decimal('0.05')).quantize(Decimal('0.01'))
+                vat_amt = (Decimal(total_revenue) * Decimal('0.10')).quantize(Decimal('0.01'))
+                service_amt = (Decimal(total_revenue) * Decimal('0.02')).quantize(Decimal('0.01'))
+                estimated_sum = gst_amt + vat_amt + service_amt
+                other_amt = Decimal('0.00')
+                if total_tax_collected and total_tax_collected > estimated_sum:
+                    other_amt = total_tax_collected - estimated_sum
+
+                tax_details = [
+                    {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"},
+                    {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"},
+                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"},
+                ]
+                if other_amt > 0:
+                    tax_details.append({"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
+
+            response = {
+                "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
+                "tax_details": tax_details
+            }
+
+            return Response({"success": True, "message": "Tax on purchase report fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExpenseByCategoryReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            qs = users_models.UserExpense.objects.filter(user=user)
+            if start_date:
+                qs = qs.filter(expense_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(expense_date__lte=end_date)
+
+            categories = [
+                "Food & Dining",
+                "Transport",
+                "Shopping",
+                "Bills",
+                "Entertainment",
+            ]
+
+            # collect amounts per category first
+            cat_amounts = {}
+            for cat in categories:
+                amt = qs.filter(category__iexact=cat).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                cat_amounts[cat] = Decimal(amt)
+
+            total_expense = sum(cat_amounts.values(), Decimal('0.00'))
+
+            # simple breakdown (category + amount)
+            breakdown = [{"category": cat, "amount": f"{cat_amounts[cat]:.2f}"} for cat in categories]
+
+            # new breakdown: category, percentage, amount
+            breakdown_with_percentage = []
+            for cat in categories:
+                amt = cat_amounts[cat]
+                if total_expense > 0:
+                    percent = (amt / total_expense) * 100
+                else:
+                    percent = Decimal('0.00')
+                breakdown_with_percentage.append({
+                    "category": cat,
+                    "percentage": f"{percent:.2f}",
+                    "amount": f"{amt:.2f}"
+                })
+
+            response = {
+                "total_expense": f"{total_expense:.2f}",
+                "breakdown": breakdown,
+                "breakdown_with_percentage": breakdown_with_percentage
+            }
+
+            return Response({"success": True, "message": "Expense by category fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExpenseByDateReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            qs = users_models.UserExpense.objects.filter(user=user)
+            if start_date:
+                qs = qs.filter(expense_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(expense_date__lte=end_date)
+
+
+            total_expense = qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+            # current week breakdown (Monday -> Sunday)
+            today = timezone.now().date()
+            week_start = today - timedelta(days=today.weekday())
+            week_details = []
+            for i in range(7):
+                d = week_start + timedelta(days=i)
+                amt = qs.filter(expense_date=d).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                week_details.append({
+                    "date": d.isoformat(),
+                    "day": d.strftime("%A"),
+                    "amount": f"{Decimal(amt):.2f}"
+                })
+
+            response = {
+                "total_expense": f"{Decimal(total_expense):.2f}",
+                "current_week": week_details
+            }
+
+            return Response({"success": True, "message": "Expense by date fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
