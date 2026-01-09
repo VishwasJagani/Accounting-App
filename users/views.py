@@ -6,6 +6,7 @@ from django.db.models import Q, Sum, F, Count
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from datetime import timedelta, datetime
+import calendar
 from drf_yasg.utils import swagger_auto_schema
 from django.contrib.auth.hashers import check_password
 
@@ -2192,10 +2193,36 @@ class ExpenseReportPage(APIView):
             else:
                 percentage_change = 0
 
+            year = today.year
+            month = today.month
+            days_in_month = calendar.monthrange(year, month)[1]
+            first_of_month = today.replace(day=1)
+
+            # Build a map of expense_date -> total for the month
+            month_qs = expense_pr.filter(expense_date__year=year, expense_date__month=month)
+            month_totals = month_qs.values('expense_date').annotate(total=Sum('amount'))
+            month_totals_map = {item['expense_date']: item['total'] for item in month_totals}
+
+            labels = []
+            data = []
+            for d in range(1, days_in_month + 1):
+                day_date = first_of_month + timedelta(days=(d - 1))
+                labels.append(day_date.isoformat())
+                amt = month_totals_map.get(day_date, Decimal('0.00'))
+                # convert Decimal to float for charting (round to 2 decimals)
+                data.append(float(round(amt, 2)))
+
+            chart_data = {
+                'labels': labels,
+                'data': data,
+                'total_for_month': float(round(sum(data), 2))
+            }
+
             response_data = {
                 "recent_expenses": recent_expenses,
                 "category_percentages": category_percentages,
-                "total_spent": users_models.UserExpense.objects.aggregate(total=Sum('amount'))['total'] or Decimal('0.00'),
+                "total_spent": float(round((users_models.UserExpense.objects.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')), 2)),
+                "chart_data": chart_data,
                 "compare_to_last_month": {
                     "last_month_total": int(last_month_total),
                     "percentage_change": percentage_change,
@@ -2646,9 +2673,46 @@ class SalesSummaryView(APIView):
                 else:
                     buckets['Other'] += total
 
-            sales_by_category = [
-                {'category': k, 'total_sales': round(v, 2)} for k, v in buckets.items()
-            ]
+            # Compute total across buckets and build category data with percentages
+            total_in_buckets = sum(buckets.values()) or Decimal('0.00')
+
+            sales_by_category = []
+            for k, v in buckets.items():
+                total_val = v or Decimal('0.00')
+                total_display = float(round(total_val, 2))
+                if total_in_buckets and total_in_buckets > Decimal('0.00'):
+                    percentage = float(round((total_val / total_in_buckets) * 100, 2))
+                else:
+                    percentage = 0.0
+                sales_by_category.append({
+                    'category': k,
+                    'total_sales': total_display,
+                    'percentage': percentage,
+                })
+
+            # Compare total sales to last calendar month
+            today = timezone.localdate()
+            first_day_current_month = today.replace(day=1)
+            last_day_last_month = first_day_current_month - timedelta(days=1)
+            first_day_last_month = last_day_last_month.replace(day=1)
+
+            last_month_items = products_models.InvoiceItems.objects.filter(
+                invoice__user=user,
+                invoice__invoice_type="sales",
+                invoice__is_deleted=False,
+                product__is_deleted=False,
+                invoice__issue_date__gte=first_day_last_month,
+                invoice__issue_date__lte=last_day_last_month,
+            )
+
+            last_month_total = last_month_items.aggregate(
+                total_sales=Sum(F('qty') * F('price'))
+            )['total_sales'] or Decimal('0.00')
+
+            if last_month_total > Decimal('0.00'):
+                percentage_change = float(round(((total_sales - last_month_total) / last_month_total) * 100, 2))
+            else:
+                percentage_change = 0.0
 
             # Recent sales: latest invoices (use issue_date then created_at)
             recent_invoices_qs = products_models.Invoice.objects.filter(
@@ -2669,8 +2733,9 @@ class SalesSummaryView(APIView):
 
             data = {
                 "total_sales": total_sales,
+                "last_month_percentage_change": percentage_change,
                 "total_orders": total_orders,
-                "avg_order_value": round(avg_order_value, 2),
+                "avg_order_value": float(round(avg_order_value, 2)),
                 "sales_by_category": sales_by_category,
                 "recent_sales": recent_sales,
             }
@@ -3495,6 +3560,68 @@ class TaxOnSalesReportView(APIView):
                 "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
                 "tax_details": tax_details
             }
+
+            # Build month-wise chart data
+            try:
+                # Determine date range for months
+                if start_date and end_date:
+                    try:
+                        start_dt = datetime.fromisoformat(start_date).date()
+                    except Exception:
+                        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+                    try:
+                        end_dt = datetime.fromisoformat(end_date).date()
+                    except Exception:
+                        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+                else:
+                    now = timezone.now().date()
+                    start_dt = now.replace(month=1, day=1)
+                    end_dt = now.replace(month=12, day=31)
+
+                # Aggregate invoice-level tax per month
+                invoice_months = sales_qs.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('tax'))
+                invoice_map = {}
+                for im in invoice_months:
+                    m = im.get('month')
+                    if m:
+                        # normalize month key to a date (first day of month)
+                        key = m.date() if hasattr(m, 'date') else m
+                        invoice_map[key] = Decimal(im.get('total') or Decimal('0.00'))
+
+                # Aggregate item-level tax per month (by invoice issue_date)
+                items_months = items_qs.annotate(month=TruncMonth('invoice__issue_date')).values('month').annotate(total=Sum('tax'))
+                items_map = {}
+                for it in items_months:
+                    m = it.get('month')
+                    if m:
+                        key = m.date() if hasattr(m, 'date') else m
+                        items_map[key] = Decimal(it.get('total') or Decimal('0.00'))
+
+                # Build month list from start_dt to end_dt
+                chart_data = []
+                cur = start_dt.replace(day=1)
+                while cur <= end_dt:
+                    month_start = cur.replace(day=1)
+                    inv_amt = invoice_map.get(month_start, Decimal('0.00'))
+                    item_amt = items_map.get(month_start, Decimal('0.00'))
+                    # Prefer invoice-level tax when present (non-zero)
+                    month_amt = inv_amt if inv_amt and inv_amt != Decimal('0.00') else item_amt
+                    chart_data.append({"month": month_start.strftime('%b'), "amount": f"{month_amt:.2f}"})
+                    # increment month
+                    if cur.month == 12:
+                        cur = cur.replace(year=cur.year + 1, month=1)
+                    else:
+                        cur = cur.replace(month=cur.month + 1)
+
+                # Also provide separate arrays for labels and values
+                chart_months = [c.get('month') for c in chart_data]
+                chart_amounts = [c.get('amount') for c in chart_data]
+
+                response['chart_months'] = chart_months
+                response['chart_amounts'] = chart_amounts
+            
+            except Exception:
+                response['chart_data'] = []
 
             return Response({"success": True, "message": "Tax on sales report fetched.", "data": response}, status=status.HTTP_200_OK)
 
