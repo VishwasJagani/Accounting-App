@@ -2316,6 +2316,67 @@ class StatisticsPageView(APIView):
                 "roi": round(roi, 2),
             }
 
+            # Build simple month:value chart (net = revenue - expense) for each month
+            try:
+                if start_date and end_date:
+                    try:
+                        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    except Exception:
+                        start_dt = None
+                    try:
+                        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    except Exception:
+                        end_dt = None
+                    if not start_dt or not end_dt:
+                        now = timezone.now().date()
+                        start_dt = start_dt or now.replace(month=1, day=1)
+                        end_dt = end_dt or now.replace(month=12, day=31)
+                else:
+                    now = timezone.now().date()
+                    start_dt = now.replace(month=1, day=1)
+                    end_dt = now.replace(month=12, day=31)
+
+                # revenue per month (paid invoices)
+                rev_months = paid_invoices.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('total'))
+                rev_map = {}
+                for r in rev_months:
+                    m = r.get('month')
+                    if m:
+                        month_key = m.date() if hasattr(m, 'date') else m
+                        month_key = month_key.replace(day=1)
+                        rev_map[month_key] = Decimal(r.get('total') or Decimal('0.00'))
+
+                # expenses per month
+                exp_months = expenses.annotate(month=TruncMonth('expense_date')).values('month').annotate(total=Sum('amount'))
+                exp_map = {}
+                for ex in exp_months:
+                    m = ex.get('month')
+                    if m:
+                        month_key = m.date() if hasattr(m, 'date') else m
+                        month_key = month_key.replace(day=1)
+                        exp_map[month_key] = Decimal(ex.get('total') or Decimal('0.00'))
+
+                # Build arrays for all months Jan..Dec for a single year
+                # Choose target year from start_dt if provided, else current year
+                target_year = start_dt.year if start_dt else timezone.now().year
+
+                months = []
+                amounts = []
+                for m in range(1, 13):
+                    month_start = datetime(target_year, m, 1).date()
+                    rev_amt = rev_map.get(month_start, Decimal('0.00'))
+                    exp_amt = exp_map.get(month_start, Decimal('0.00'))
+                    net_amt = rev_amt - exp_amt
+                    months.append(month_start.strftime('%b'))
+                    amounts.append(f"{net_amt:.2f}")
+
+                data['chart_months'] = months
+                data['chart_amounts'] = amounts
+
+            except Exception:
+                data['chart_months'] = [calendar.month_abbr[i] for i in range(1, 13)]
+                data['chart_amounts'] = ["0.00"] * 12
+
             return Response({"success": True, "message": "Statistics page data fetched successfully.", "data": data}, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -3727,6 +3788,73 @@ class TaxOnPurchaseReportView(APIView):
                 "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
                 "tax_details": tax_details
             }
+
+            # Build month-wise chart data (labels and values)
+            try:
+                # Determine date range for months
+                if start_date and end_date:
+                    try:
+                        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    except Exception:
+                        start_dt = None
+                    try:
+                        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    except Exception:
+                        end_dt = None
+                    if not start_dt or not end_dt:
+                        now = timezone.now().date()
+                        start_dt = start_dt or now.replace(month=1, day=1)
+                        end_dt = end_dt or now.replace(month=12, day=31)
+                else:
+                    now = timezone.now().date()
+                    start_dt = now.replace(month=1, day=1)
+                    end_dt = now.replace(month=12, day=31)
+
+                # Aggregate invoice-level tax per month
+                invoice_months = sales_qs.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('tax'))
+                invoice_map = {}
+                for im in invoice_months:
+                    m = im.get('month')
+                    if m:
+                        month_key = m.date() if hasattr(m, 'date') else m
+                        month_key = month_key.replace(day=1)
+                        invoice_map[month_key] = Decimal(im.get('total') or Decimal('0.00'))
+
+                # Aggregate item-level tax per month (by invoice issue_date)
+                items_months = items_qs.annotate(month=TruncMonth('invoice__issue_date')).values('month').annotate(total=Sum('tax'))
+                items_map = {}
+                for it in items_months:
+                    m = it.get('month')
+                    if m:
+                        month_key = m.date() if hasattr(m, 'date') else m
+                        month_key = month_key.replace(day=1)
+                        items_map[month_key] = Decimal(it.get('total') or Decimal('0.00'))
+
+                # Build month list from start_dt to end_dt
+                chart_data = []
+                cur = start_dt.replace(day=1)
+                while cur <= end_dt:
+                    month_start = cur.replace(day=1)
+                    inv_amt = invoice_map.get(month_start, Decimal('0.00'))
+                    item_amt = items_map.get(month_start, Decimal('0.00'))
+                    # Prefer invoice-level tax when present (non-zero)
+                    month_amt = inv_amt if inv_amt and inv_amt != Decimal('0.00') else item_amt
+                    chart_data.append({"month": month_start.strftime('%b'), "amount": f"{month_amt:.2f}"})
+                    # increment month
+                    if cur.month == 12:
+                        cur = cur.replace(year=cur.year + 1, month=1)
+                    else:
+                        cur = cur.replace(month=cur.month + 1)
+
+                # Also provide separate arrays for labels and values
+                chart_months = [c.get('month') for c in chart_data]
+                chart_amounts = [c.get('amount') for c in chart_data]
+
+                response['chart_months'] = chart_months
+                response['chart_amounts'] = chart_amounts
+            except Exception:
+                response['chart_months'] = []
+                response['chart_amounts'] = []
 
             return Response({"success": True, "message": "Tax on purchase report fetched.", "data": response}, status=status.HTTP_200_OK)
 
