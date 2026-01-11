@@ -20,6 +20,8 @@ urlpatterns = [
          name="send-otp"),
     path('verify-otp/', users_views.VerifyOTPView.as_view(),
          name="verify-otp"),
+    path('enable-disable-2fa/', users_views.EnableDisableTwoFactorAuthView.as_view(),
+         name="enable-disable-2fa"),
 
     path('client/', include([
         path('', users_views.ClientView.as_view(), name='client-list'),
@@ -80,4 +82,10 @@ urlpatterns = [
          path('expense-by-date', users_views.ExpenseByDateReportView.as_view(),
               name="expense-by-date-report"),
          ])),
+
+    path('privacy-policy/', users_views.GetPrivacyPolicyView.as_view(),
+         name="privacy-policy"),
+    path('faqs/', users_views.GetFAQsView.as_view(),
+         name="faqs"),
+
 ]

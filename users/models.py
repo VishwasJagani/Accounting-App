@@ -41,6 +41,7 @@ class User(BaseModel):
     is_email_verified = models.BooleanField(default=False)
     is_phone_verified = models.BooleanField(default=False)
     is_admin = models.BooleanField(default=False)
+    is_two_factor_enabled = models.BooleanField(default=False)
     last_login = models.DateTimeField(blank=True, null=True)
 
     class Meta:

@@ -25,6 +25,7 @@ from products import serializer as products_serializer
 from base_files.base_permission import IsAuthenticated
 from base_files.base_pagination import CustomPagination
 from base_files.base_task import send_mail
+from admin_panel import models as admin_models
 
 
 class RoleList(generics.ListAPIView):
@@ -639,6 +640,10 @@ class SendOTPView(APIView):
                     if user.is_email_verified:
                         return Response({"success": False, "message": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
 
+            if otp_type == "two_factor_auth":
+                if not users_models.User.objects.filter(email=email, is_deleted=False, is_active=True).exists():
+                    return Response({"success": False, "message": "User With This Email Not Exist."}, status=status.HTTP_400_BAD_REQUEST)
+
             users_models.Otp.objects.filter(
                 user=email, otp_type=otp_type).delete()
 
@@ -735,6 +740,7 @@ class VerifyOTPView(APIView):
                 if otp_type == "reset_password":
                     otp.delete()
                     return Response({"success": True, "message": "OTP verified successfully. You can now reset your password."}, status=status.HTTP_200_OK)
+
                 if otp_type == "verify_email":
                     user = users_models.User.objects.filter(
                         email=email, is_deleted=False, is_active=True).first()
@@ -746,11 +752,35 @@ class VerifyOTPView(APIView):
                     else:
                         return Response({"success": False, "message": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
 
+                if otp_type == "two_factor_auth":
+                    otp.delete()
+                    return Response({"success": True, "message": "OTP verified successfully for two-factor authentication."}, status=status.HTTP_200_OK)
+
                 else:
                     return Response({"success": False, "message": "Invalid OTP Type."}, status=status.HTTP_400_BAD_REQUEST)
 
             else:
                 return Response({"success": False, "message": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EnableDisableTwoFactorAuthView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            if user.is_two_factor_enabled:
+                user.is_two_factor_enabled = False
+                user.save()
+                return Response({"success": True, "message": "Two-Factor Authentication disabled successfully."}, status=status.HTTP_200_OK)
+
+            user.is_two_factor_enabled = True
+            user.save()
+
+            return Response({"success": True, "message": "Two-Factor Authentication enabled successfully."}, status=status.HTTP_200_OK) 
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -3963,3 +3993,29 @@ class ExpenseByDateReportView(APIView):
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
+class GetPrivacyPolicyView(APIView):
+
+    def get(self, request):
+        try:
+            policy = admin_models.PrivacyPolicy.objects.first()
+            if not policy:
+                return Response({"success": False, "message": "Privacy policy not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({"success": True, "message": "Privacy policy fetched.", "data": policy.content}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetFAQsView(APIView):
+
+    def get(self, request):
+        try:
+            faqs = admin_models.FAQs.objects.first()
+            if not faqs:
+                return Response({"success": False, "message": "FAQs not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({"success": True, "message": "FAQs fetched.", "data": faqs.faqs}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
