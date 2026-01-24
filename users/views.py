@@ -3016,6 +3016,33 @@ class PurchaseBySupplier(APIView):
                 total_items=Sum('order_items__qty'))
             total_items = int(total_items_agg.get('total_items') or 0)
 
+            # Supplier-wise purchase breakdown for chart
+            supplier_purchases = orders_qs.values(
+                'client__client_name', 'client__email'
+            ).annotate(
+                supplier_total=Sum('total')
+            ).order_by('-supplier_total')
+
+            supplier_labels = []
+            supplier_data = []
+            for supplier in supplier_purchases:
+                supplier_name = supplier.get('client__client_name') or supplier.get('client__email') or 'Unknown'
+                supplier_amount = supplier.get('supplier_total') or Decimal('0.00')
+                supplier_labels.append(supplier_name)
+                supplier_data.append(float(round(supplier_amount, 2)))
+
+            # Calculate percentages
+            supplier_percentages = []
+            total_purchase_float = float(total_purchase) if total_purchase > Decimal('0.00') else 1
+            for amount in supplier_data:
+                percentage = round((amount / total_purchase_float) * 100, 2)
+                supplier_percentages.append(percentage)
+
+            # Calculate total payment due (unpaid orders)
+            unpaid_orders = orders_qs.exclude(order_status__iexact='Paid')
+            total_payment_due = unpaid_orders.aggregate(
+                total=Sum('total')).get('total') or Decimal('0.00')
+
             # Detailed report rows
             detailed = []
             orders_prefetch = orders_qs.prefetch_related(
@@ -3061,7 +3088,15 @@ class PurchaseBySupplier(APIView):
 
             response = {
                 'total_purchase_amount': f"{Decimal(total_purchase):.2f}",
+                'total_payment_due': f"{Decimal(total_payment_due):.2f}",
+                'active_suppliers': supplier_purchases.count(),
+                'average_order_value': f"{(total_purchase / supplier_purchases.count()):.2f}" if supplier_purchases.count() > 0 else "0.00",
                 'total_items_purchased': total_items,
+                'supplier_chart': {
+                    'labels': supplier_labels,
+                    # 'data': supplier_data,
+                    'percentages': supplier_percentages,
+                },
                 'detailed_report': detailed,
             }
 
