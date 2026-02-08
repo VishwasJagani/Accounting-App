@@ -2268,149 +2268,232 @@ class ExpenseReportPage(APIView):
 class StatisticsPageView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def _parse_date(self, date_str):
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    def _sum(self, qs, field):
+        return qs.aggregate(total=Sum(field))["total"] or Decimal("0.00")
+
     def get(self, request):
         try:
             user = request.user
 
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
+            start_dt = self._parse_date(request.query_params.get("start_date"))
+            end_dt = self._parse_date(request.query_params.get("end_date"))
 
+            # -------------------------------
+            # BASE QUERYSETS
+            # -------------------------------
             invoices = products_models.Invoice.objects.filter(
-                user=user, invoice_type="sales")
+                user=user, invoice_type="sales"
+            )
+            expenses = users_models.UserExpense.objects.filter(user=user)
 
-            if start_date:
-                invoices = invoices.filter(issue_date__gte=start_date)
-            if end_date:
-                invoices = invoices.filter(issue_date__lte=end_date)
+            if start_dt:
+                invoices = invoices.filter(issue_date__gte=start_dt)
+                expenses = expenses.filter(expense_date__gte=start_dt)
+            if end_dt:
+                invoices = invoices.filter(issue_date__lte=end_dt)
+                expenses = expenses.filter(expense_date__lte=end_dt)
 
             paid_invoices = invoices.filter(status="Paid")
 
-            total_revenue = paid_invoices.aggregate(
-                total=Sum('total'))['total'] or Decimal('0.00')
+            # -------------------------------
+            # PRIMARY METRICS
+            # -------------------------------
+            total_revenue = self._sum(paid_invoices, "total")
+            pending_amount = self._sum(invoices.filter(status="Pending"), "total")
+            total_expense = self._sum(expenses, "amount")
 
-            pending_amount = invoices.filter(status="Pending").aggregate(
-                total=Sum('total'))['total'] or Decimal('0.00')
-
-            expenses = users_models.UserExpense.objects.filter(user=user)
-            if start_date:
-                expenses = expenses.filter(expense_date__gte=start_date)
-            if end_date:
-                expenses = expenses.filter(expense_date__lte=end_date)
-
-            total_expense = expenses.aggregate(
-                total=Sum('amount'))['total'] or Decimal('0.00')
-
-            # COGS
-            cogs = products_models.InvoiceItems.objects.filter(
-                invoice__in=paid_invoices
-            ).aggregate(
-                total_cogs=Sum(F('qty') * F('product__cost_price'))
-            )['total_cogs'] or Decimal('0.00')
-
-            gross_profit = total_revenue - cogs
-            operating_expense = total_expense
-            ebitda = gross_profit - operating_expense
-            net_profit = ebitda
-
-            # Cash Flow
-            purchases = products_models.Invoice.objects.filter(
-                user=user, invoice_type="purchase", status="Paid"
+            cogs = (
+                products_models.InvoiceItems.objects.filter(
+                    invoice__in=paid_invoices
+                ).aggregate(
+                    total=Sum(F("qty") * F("product__cost_price"))
+                )["total"]
+                or Decimal("0.00")
             )
 
-            if start_date:
-                purchases = purchases.filter(issue_date__gte=start_date)
-            if end_date:
-                purchases = purchases.filter(issue_date__lte=end_date)
+            gross_profit = total_revenue - cogs
+            ebitda = gross_profit - total_expense
+            net_profit = ebitda
 
-            paid_purchases = purchases.aggregate(total=Sum('total'))[
-                'total'] or Decimal('0.00')
+            # -------------------------------
+            # CASH FLOW
+            # -------------------------------
+            purchases = products_models.Invoice.objects.filter(
+                user=user,
+                invoice_type="purchase",
+                status="Paid"
+            )
 
+            if start_dt:
+                purchases = purchases.filter(issue_date__gte=start_dt)
+            if end_dt:
+                purchases = purchases.filter(issue_date__lte=end_dt)
+
+            paid_purchases = self._sum(purchases, "total")
             cash_flow = total_revenue - (total_expense + paid_purchases)
 
+            # -------------------------------
             # ROI
-            total_investment = cogs + total_expense
-            if total_investment > Decimal('0.00'):
-                roi = (net_profit / total_investment) * 100
-            else:
-                roi = Decimal('0.00')
+            # -------------------------------
+            investment = cogs + total_expense
+            roi = (net_profit / investment * 100) if investment > 0 else Decimal("0.00")
 
+            # -------------------------------
+            # PERIOD COMPARISON
+            # -------------------------------
+            gross_profit_change = ebitda_change = cash_flow_change = roi_change = Decimal("0.00")
+
+            gross_profit_change_positive = False
+            ebitda_change_positive = False
+            cash_flow_change_positive = False
+            roi_change_positive = False
+
+            if start_dt and end_dt:
+                days = (end_dt - start_dt).days
+                prev_start = start_dt - timedelta(days=days + 1)
+                prev_end = start_dt - timedelta(days=1)
+
+                prev_paid = products_models.Invoice.objects.filter(
+                    user=user,
+                    invoice_type="sales",
+                    status="Paid",
+                    issue_date__range=(prev_start, prev_end),
+                )
+
+                prev_revenue = self._sum(prev_paid, "total")
+                prev_expense = self._sum(
+                    users_models.UserExpense.objects.filter(
+                        user=user,
+                        expense_date__range=(prev_start, prev_end)
+                    ),
+                    "amount"
+                )
+
+                prev_cogs = (
+                    products_models.InvoiceItems.objects.filter(
+                        invoice__in=prev_paid
+                    ).aggregate(
+                        total=Sum(F("qty") * F("product__cost_price"))
+                    )["total"]
+                    or Decimal("0.00")
+                )
+
+                prev_purchases = self._sum(
+                    products_models.Invoice.objects.filter(
+                        user=user,
+                        invoice_type="purchase",
+                        status="Paid",
+                        issue_date__range=(prev_start, prev_end),
+                    ),
+                    "total"
+                )
+
+                prev_gp = prev_revenue - prev_cogs
+                prev_ebitda = prev_gp - prev_expense
+                prev_cash_flow = prev_revenue - (prev_expense + prev_purchases)
+
+                prev_roi = (
+                    (prev_ebitda / (prev_cogs + prev_expense) * 100)
+                    if (prev_cogs + prev_expense) > 0 else Decimal("0.00")
+                )
+
+                def pct(curr, prev):
+                    if prev > 0:
+                        return round(((curr - prev) / prev) * 100, 2)
+                    return 100 if curr > 0 else 0
+
+                gross_profit_change_positive =  gross_profit_change >= 0
+                gross_profit_change = pct(gross_profit, prev_gp)
+                ebitda_change_positive = ebitda_change >= 0
+                ebitda_change = pct(ebitda, prev_ebitda)
+                cash_flow_change_positive = cash_flow_change >= 0
+                cash_flow_change = pct(cash_flow, prev_cash_flow)
+                roi_change_positive = roi_change >= 0
+                roi_change = pct(roi, prev_roi)
+
+            # -------------------------------
+            # MONTHLY CHART
+            # -------------------------------
+            target_year = (start_dt or timezone.now().date()).year
+
+            rev_map = {}
+            for r in paid_invoices.annotate(
+                    month=TruncMonth("issue_date")
+                ).values("month").annotate(total=Sum("total")):
+
+                m = r["month"]
+                if not m:
+                    continue
+
+                if hasattr(m, "date"):
+                    m = m.date()
+
+                m = m.replace(day=1)
+                rev_map[m] = r["total"] or Decimal("0.00")
+
+            exp_map = {}
+            for e in expenses.annotate(
+                    month=TruncMonth("expense_date")
+                ).values("month").annotate(total=Sum("amount")):
+
+                m = e["month"]
+                if not m:
+                    continue
+
+                if hasattr(m, "date"):
+                    m = m.date()
+
+                m = m.replace(day=1)
+                exp_map[m] = e["total"] or Decimal("0.00")
+
+            months, amounts = [], []
+            for m in range(1, 13):
+                dt = datetime(target_year, m, 1).date()
+                net = (rev_map.get(dt, 0) or 0) - (exp_map.get(dt, 0) or 0)
+                months.append(calendar.month_abbr[m])
+                amounts.append(f"{net:.2f}")
+
+            # -------------------------------
+            # RESPONSE
+            # -------------------------------
             data = {
                 "total_revenue": total_revenue,
                 "total_expense": total_expense,
                 "net_profit": net_profit,
                 "pending_amount": pending_amount,
                 "gross_profit": gross_profit,
-                "operating_expense": operating_expense,
+                "operating_expense": total_expense,
                 "ebitda": ebitda,
                 "cash_flow": cash_flow,
                 "roi": round(roi, 2),
+                "gross_profit_change_positive": gross_profit_change_positive,
+                "gross_profit_change": float(gross_profit_change),
+                "ebitda_change_positive": ebitda_change_positive,
+                "ebitda_change": float(ebitda_change),
+                "cash_flow_change_positive": cash_flow_change_positive,
+                "cash_flow_change": float(cash_flow_change),
+                "roi_change_positive": roi_change_positive,
+                "roi_change": float(roi_change),
+                "chart_months": months,
+                "chart_amounts": amounts,
             }
 
-            # Build simple month:value chart (net = revenue - expense) for each month
-            try:
-                if start_date and end_date:
-                    try:
-                        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-                    except Exception:
-                        start_dt = None
-                    try:
-                        end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-                    except Exception:
-                        end_dt = None
-                    if not start_dt or not end_dt:
-                        now = timezone.now().date()
-                        start_dt = start_dt or now.replace(month=1, day=1)
-                        end_dt = end_dt or now.replace(month=12, day=31)
-                else:
-                    now = timezone.now().date()
-                    start_dt = now.replace(month=1, day=1)
-                    end_dt = now.replace(month=12, day=31)
-
-                # revenue per month (paid invoices)
-                rev_months = paid_invoices.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('total'))
-                rev_map = {}
-                for r in rev_months:
-                    m = r.get('month')
-                    if m:
-                        month_key = m.date() if hasattr(m, 'date') else m
-                        month_key = month_key.replace(day=1)
-                        rev_map[month_key] = Decimal(r.get('total') or Decimal('0.00'))
-
-                # expenses per month
-                exp_months = expenses.annotate(month=TruncMonth('expense_date')).values('month').annotate(total=Sum('amount'))
-                exp_map = {}
-                for ex in exp_months:
-                    m = ex.get('month')
-                    if m:
-                        month_key = m.date() if hasattr(m, 'date') else m
-                        month_key = month_key.replace(day=1)
-                        exp_map[month_key] = Decimal(ex.get('total') or Decimal('0.00'))
-
-                # Build arrays for all months Jan..Dec for a single year
-                # Choose target year from start_dt if provided, else current year
-                target_year = start_dt.year if start_dt else timezone.now().year
-
-                months = []
-                amounts = []
-                for m in range(1, 13):
-                    month_start = datetime(target_year, m, 1).date()
-                    rev_amt = rev_map.get(month_start, Decimal('0.00'))
-                    exp_amt = exp_map.get(month_start, Decimal('0.00'))
-                    net_amt = rev_amt - exp_amt
-                    months.append(month_start.strftime('%b'))
-                    amounts.append(f"{net_amt:.2f}")
-
-                data['chart_months'] = months
-                data['chart_amounts'] = amounts
-
-            except Exception:
-                data['chart_months'] = [calendar.month_abbr[i] for i in range(1, 13)]
-                data['chart_amounts'] = ["0.00"] * 12
-
-            return Response({"success": True, "message": "Statistics page data fetched successfully.", "data": data}, status=status.HTTP_200_OK)
+            return Response(
+                {"success": True, "message": "Statistics fetched successfully.", "data": data},
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
-            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"success": False, "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class SalesByClientReportView(APIView):
