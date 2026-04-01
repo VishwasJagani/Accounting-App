@@ -780,7 +780,7 @@ class EnableDisableTwoFactorAuthView(APIView):
             user.is_two_factor_enabled = True
             user.save()
 
-            return Response({"success": True, "message": "Two-Factor Authentication enabled successfully."}, status=status.HTTP_200_OK) 
+            return Response({"success": True, "message": "Two-Factor Authentication enabled successfully."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -2229,9 +2229,11 @@ class ExpenseReportPage(APIView):
             first_of_month = today.replace(day=1)
 
             # Build a map of expense_date -> total for the month
-            month_qs = expense_pr.filter(expense_date__year=year, expense_date__month=month)
-            month_totals = month_qs.values('expense_date').annotate(total=Sum('amount'))
-            month_totals_map = {item['expense_date']: item['total'] for item in month_totals}
+            month_qs = expense_pr.filter(
+                expense_date__year=year, expense_date__month=month)
+            month_totals = month_qs.values(
+                'expense_date').annotate(total=Sum('amount'))
+            month_totals_map = {item['expense_date']                                : item['total'] for item in month_totals}
 
             labels = []
             data = []
@@ -2305,7 +2307,8 @@ class StatisticsPageView(APIView):
             # PRIMARY METRICS
             # -------------------------------
             total_revenue = self._sum(paid_invoices, "total")
-            pending_amount = self._sum(invoices.filter(status="Pending"), "total")
+            pending_amount = self._sum(
+                invoices.filter(status="Pending"), "total")
             total_expense = self._sum(expenses, "amount")
 
             cogs = (
@@ -2342,12 +2345,14 @@ class StatisticsPageView(APIView):
             # ROI
             # -------------------------------
             investment = cogs + total_expense
-            roi = (net_profit / investment * 100) if investment > 0 else Decimal("0.00")
+            roi = (net_profit / investment *
+                   100) if investment > 0 else Decimal("0.00")
 
             # -------------------------------
             # PERIOD COMPARISON
             # -------------------------------
-            gross_profit_change = ebitda_change = cash_flow_change = roi_change = Decimal("0.00")
+            gross_profit_change = ebitda_change = cash_flow_change = roi_change = Decimal(
+                "0.00")
 
             gross_profit_change_positive = False
             ebitda_change_positive = False
@@ -2408,7 +2413,7 @@ class StatisticsPageView(APIView):
                         return round(((curr - prev) / prev) * 100, 2)
                     return 100 if curr > 0 else 0
 
-                gross_profit_change_positive =  gross_profit_change >= 0
+                gross_profit_change_positive = gross_profit_change >= 0
                 gross_profit_change = pct(gross_profit, prev_gp)
                 ebitda_change_positive = ebitda_change >= 0
                 ebitda_change = pct(ebitda, prev_ebitda)
@@ -2424,8 +2429,8 @@ class StatisticsPageView(APIView):
 
             rev_map = {}
             for r in paid_invoices.annotate(
-                    month=TruncMonth("issue_date")
-                ).values("month").annotate(total=Sum("total")):
+                month=TruncMonth("issue_date")
+            ).values("month").annotate(total=Sum("total")):
 
                 m = r["month"]
                 if not m:
@@ -2439,8 +2444,8 @@ class StatisticsPageView(APIView):
 
             exp_map = {}
             for e in expenses.annotate(
-                    month=TruncMonth("expense_date")
-                ).values("month").annotate(total=Sum("amount")):
+                month=TruncMonth("expense_date")
+            ).values("month").annotate(total=Sum("amount")):
 
                 m = e["month"]
                 if not m:
@@ -2855,7 +2860,8 @@ class SalesSummaryView(APIView):
                 total_val = v or Decimal('0.00')
                 total_display = float(round(total_val, 2))
                 if total_in_buckets and total_in_buckets > Decimal('0.00'):
-                    percentage = float(round((total_val / total_in_buckets) * 100, 2))
+                    percentage = float(
+                        round((total_val / total_in_buckets) * 100, 2))
                 else:
                     percentage = 0.0
                 sales_by_category.append({
@@ -2884,7 +2890,8 @@ class SalesSummaryView(APIView):
             )['total_sales'] or Decimal('0.00')
 
             if last_month_total > Decimal('0.00'):
-                percentage_change = float(round(((total_sales - last_month_total) / last_month_total) * 100, 2))
+                percentage_change = float(
+                    round(((total_sales - last_month_total) / last_month_total) * 100, 2))
             else:
                 percentage_change = 0.0
 
@@ -3109,14 +3116,17 @@ class PurchaseBySupplier(APIView):
             supplier_labels = []
             supplier_data = []
             for supplier in supplier_purchases:
-                supplier_name = supplier.get('client__client_name') or supplier.get('client__email') or 'Unknown'
-                supplier_amount = supplier.get('supplier_total') or Decimal('0.00')
+                supplier_name = supplier.get('client__client_name') or supplier.get(
+                    'client__email') or 'Unknown'
+                supplier_amount = supplier.get(
+                    'supplier_total') or Decimal('0.00')
                 supplier_labels.append(supplier_name)
                 supplier_data.append(float(round(supplier_amount, 2)))
 
             # Calculate percentages
             supplier_percentages = []
-            total_purchase_float = float(total_purchase) if total_purchase > Decimal('0.00') else 1
+            total_purchase_float = float(
+                total_purchase) if total_purchase > Decimal('0.00') else 1
             for amount in supplier_data:
                 percentage = round((amount / total_purchase_float) * 100, 2)
                 supplier_percentages.append(percentage)
@@ -3445,23 +3455,27 @@ class ProfitAndLossReportView(APIView):
 
             net_profit = Decimal(gross_profit) - \
                 Decimal(total_operating_expense)
-
+            
             response = {
-                'sales_income': f"{Decimal(sales_income):.2f}",
-                'service_revenue': f"{Decimal(service_revenue):.2f}",
-                'other_income': f"{Decimal(other_income):.2f}",
-                'total_revenue': f"{Decimal(total_revenue):.2f}",
-                'opening_stock': f"{Decimal(opening_stock):.2f}",
-                'purchases': f"{Decimal(purchases_total):.2f}",
-                'closing_stock': f"{Decimal(closing_stock):.2f}",
-                'total_cogs': f"{Decimal(total_cogs):.2f}",
-                'gross_profit': f"{Decimal(gross_profit):.2f}",
-                'rent': f"{Decimal(rent):.2f}",
-                'salaries': f"{Decimal(salaries):.2f}",
-                'marketing': f"{Decimal(marketing):.2f}",
-                'utilities': f"{Decimal(utilities):.2f}",
-                'total_operating_expense': f"{Decimal(total_operating_expense):.2f}",
-                'net_profit': f"{Decimal(net_profit):.2f}",
+                "income": {
+                    'sales_income': f"{Decimal(sales_income):.2f}",
+                    'service_revenue': f"{Decimal(service_revenue):.2f}",
+                    'other_income': f"{Decimal(other_income):.2f}",
+                    'total_revenue': f"{Decimal(total_revenue):.2f}",
+                    'net_profit': f"{Decimal(net_profit):.2f}",
+                },
+                "expenses": {
+                    'opening_stock': f"{Decimal(opening_stock):.2f}",
+                    'purchases': f"{Decimal(purchases_total):.2f}",
+                    'closing_stock': f"{Decimal(closing_stock):.2f}",
+                    'total_cogs': f"{Decimal(total_cogs):.2f}",
+                    'gross_profit': f"{Decimal(gross_profit):.2f}",
+                    'rent': f"{Decimal(rent):.2f}",
+                    'salaries': f"{Decimal(salaries):.2f}",
+                    'marketing': f"{Decimal(marketing):.2f}",
+                    'utilities': f"{Decimal(utilities):.2f}",
+                    'total_operating_expense': f"{Decimal(total_operating_expense):.2f}",
+                },
                 'breakdown': [
                     {"category": "Revenue",
                         "amount": f"{Decimal(total_revenue):.2f}"},
@@ -3535,8 +3549,14 @@ class CashFlowReportView(APIView):
             operating_expenses_paid = expenses_qs.aggregate(
                 total=Sum('amount')).get('total') or Decimal('0.00')
 
+            payments_to_employees = expenses_qs.filter(category__iexact='salaries').aggregate(
+                total=Sum('amount')).get('total') or Decimal('0.00')
+
+            # net_cash_operating = Decimal(
+            #     cash_from_sales) - Decimal(payments_to_suppliers) - Decimal(operating_expenses_paid)
+
             net_cash_operating = Decimal(
-                cash_from_sales) - Decimal(payments_to_suppliers) - Decimal(operating_expenses_paid)
+                cash_from_sales) - Decimal(payments_to_suppliers) - Decimal(payments_to_employees)
 
             # Investing activities: models not present for equipment/investments -> accept query params or default to 0
             purchase_of_equipment = Decimal(
@@ -3559,6 +3579,7 @@ class CashFlowReportView(APIView):
 
             response = {
                 'cash_from_sales': f"{Decimal(cash_from_sales):.2f}",
+                "payments_to_employees": f"{Decimal(payments_to_employees):.2f}",
                 'payments_to_suppliers': f"{Decimal(payments_to_suppliers):.2f}",
                 'net_cash_operating_activities': f"{Decimal(net_cash_operating):.2f}",
                 'purchase_of_equipment': f"{Decimal(purchase_of_equipment):.2f}",
@@ -3595,8 +3616,10 @@ class BalanceSheetView(APIView):
             end_date = request.query_params.get('end_date')
 
             # Base querysets
-            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type="sales")
-            purchase_qs = products_models.Invoice.objects.filter(user=user, invoice_type="purchase")
+            sales_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type="sales")
+            purchase_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type="purchase")
 
             if start_date:
                 sales_qs = sales_qs.filter(issue_date__gte=start_date)
@@ -3610,16 +3633,21 @@ class BalanceSheetView(APIView):
             paid_purchases = purchase_qs.filter(status__iexact="Paid")
 
             # Cash (approximation): cash receipts - cash paid (paid purchases + expenses)
-            cash_in = paid_sales.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-            cash_out_purchases = paid_purchases.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-            total_expense = users_models.UserExpense.objects.filter(user=user).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-            cash = Decimal(cash_in) - (Decimal(cash_out_purchases) + Decimal(total_expense))
+            cash_in = paid_sales.aggregate(total=Sum('total'))[
+                'total'] or Decimal('0.00')
+            cash_out_purchases = paid_purchases.aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
+            total_expense = users_models.UserExpense.objects.filter(
+                user=user).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            cash = Decimal(cash_in) - \
+                (Decimal(cash_out_purchases) + Decimal(total_expense))
 
             # Inventory: sum(stock_level or quantity) * cost_price
             inventory = Decimal('0.00')
             products_qs = products_models.Products.objects.filter(user=user)
             for p in products_qs:
-                qty = p.quantity if p.quantity is not None else (p.stock_level or 0)
+                qty = p.quantity if p.quantity is not None else (
+                    p.stock_level or 0)
                 cost = p.cost_price or Decimal('0.00')
                 try:
                     inventory += Decimal(qty or 0) * Decimal(cost)
@@ -3627,49 +3655,63 @@ class BalanceSheetView(APIView):
                     pass
 
             # Accounts receivable: unpaid sales invoices
-            accounts_receivable = sales_qs.exclude(status__iexact="Paid").aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            accounts_receivable = sales_qs.exclude(status__iexact="Paid").aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
 
             # Fixed assets (PP&E) - accept via query param if no dedicated model
-            fixed_assets = Decimal(request.query_params.get('fixed_assets') or '0.00')
+            fixed_assets = Decimal(
+                request.query_params.get('fixed_assets') or '0.00')
 
-            total_assets = Decimal(cash) + Decimal(inventory) + Decimal(accounts_receivable) + Decimal(fixed_assets)
+            total_assets = Decimal(cash) + Decimal(inventory) + \
+                Decimal(accounts_receivable) + Decimal(fixed_assets)
 
             # Liabilities
-            accounts_payable = purchase_qs.exclude(status__iexact="Paid").aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-            short_term_debt = Decimal(request.query_params.get('short_term_debt') or '0.00')
-            long_term_loans = Decimal(request.query_params.get('long_term_loans') or '0.00')
+            accounts_payable = purchase_qs.exclude(status__iexact="Paid").aggregate(
+                total=Sum('total'))['total'] or Decimal('0.00')
+            short_term_debt = Decimal(
+                request.query_params.get('short_term_debt') or '0.00')
+            long_term_loans = Decimal(
+                request.query_params.get('long_term_loans') or '0.00')
 
             # Equity
-            owners_capital = Decimal(request.query_params.get('owners_capital') or '0.00')
+            owners_capital = Decimal(
+                request.query_params.get('owners_capital') or '0.00')
 
             # Retained earnings (approx): cumulative profit = revenue - cogs - expenses
-            cogs = products_models.InvoiceItems.objects.filter(invoice__in=paid_sales).aggregate(total_cogs=Sum(F('qty') * F('product__cost_price')))['total_cogs'] or Decimal('0.00')
-            retained_earnings = Decimal(cash_in) - Decimal(cogs) - Decimal(total_expense)
+            cogs = products_models.InvoiceItems.objects.filter(invoice__in=paid_sales).aggregate(
+                total_cogs=Sum(F('qty') * F('product__cost_price')))['total_cogs'] or Decimal('0.00')
+            retained_earnings = Decimal(
+                cash_in) - Decimal(cogs) - Decimal(total_expense)
 
             total_equity = owners_capital + Decimal(retained_earnings)
 
-            total_liabilities_and_equity = Decimal(accounts_payable) + Decimal(short_term_debt) + Decimal(long_term_loans) + Decimal(total_equity)
+            total_liabilities_and_equity = Decimal(accounts_payable) + Decimal(
+                short_term_debt) + Decimal(long_term_loans) + Decimal(total_equity)
 
             data = {
-                'cash': f"{Decimal(cash):.2f}",
-                'inventory': f"{Decimal(inventory):.2f}",
-                'accounts_receivable': f"{Decimal(accounts_receivable):.2f}",
-                'fixed_assets': f"{Decimal(fixed_assets):.2f}",
-                'total_assets': f"{Decimal(total_assets):.2f}",
-                'accounts_payable': f"{Decimal(accounts_payable):.2f}",
-                'short_term_debt': f"{Decimal(short_term_debt):.2f}",
-                'long_term_loans': f"{Decimal(long_term_loans):.2f}",
-                'owners_capital': f"{Decimal(owners_capital):.2f}",
-                'retained_earnings': f"{Decimal(retained_earnings):.2f}",
-                'total_equity': f"{Decimal(total_equity):.2f}",
-                'total_liabilities_and_equity': f"{Decimal(total_liabilities_and_equity):.2f}",
+                'assets': {
+                    'cash': f"{Decimal(cash):.2f}",
+                    'inventory': f"{Decimal(inventory):.2f}",
+                    'accounts_receivable': f"{Decimal(accounts_receivable):.2f}",
+                    'fixed_assets': f"{Decimal(fixed_assets):.2f}",
+                    'total_assets': f"{Decimal(total_assets):.2f}",
+                },
+                'liabilities': {
+                    'accounts_payable': f"{Decimal(accounts_payable):.2f}",
+                    'short_term_debt': f"{Decimal(short_term_debt):.2f}",
+                    'long_term_loans': f"{Decimal(long_term_loans):.2f}",
+                    'owners_capital': f"{Decimal(owners_capital):.2f}",
+                    'retained_earnings': f"{Decimal(retained_earnings):.2f}",
+                    'total_equity': f"{Decimal(total_equity):.2f}",
+                    'total_liabilities_and_equity': f"{Decimal(total_liabilities_and_equity):.2f}",
+                }
             }
 
             return Response({"success": True, "message": "Balance sheet fetched.", "data": data}, status=status.HTTP_200_OK)
 
         except Exception as e:
-            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)    
-    
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class TaxOnSalesReportView(APIView):
     permission_classes = [IsAuthenticated]
@@ -3681,26 +3723,33 @@ class TaxOnSalesReportView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
 
-            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type='sales', status__iexact='Paid', is_deleted=False)
+            sales_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type='sales', status__iexact='Paid', is_deleted=False)
             if start_date:
                 sales_qs = sales_qs.filter(issue_date__gte=start_date)
             if end_date:
                 sales_qs = sales_qs.filter(issue_date__lte=end_date)
 
-            total_tax_invoices = sales_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
-            total_revenue = sales_qs.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            total_tax_invoices = sales_qs.aggregate(
+                total=Sum('tax'))['total'] or Decimal('0.00')
+            total_revenue = sales_qs.aggregate(total=Sum('total'))[
+                'total'] or Decimal('0.00')
 
-            items_qs = products_models.InvoiceItems.objects.filter(invoice__in=sales_qs)
-            total_tax_items = items_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+            items_qs = products_models.InvoiceItems.objects.filter(
+                invoice__in=sales_qs)
+            total_tax_items = items_qs.aggregate(total=Sum('tax'))[
+                'total'] or Decimal('0.00')
 
             # Determine total tax collected (prefer invoice.tax if present)
-            total_tax_collected = Decimal(total_tax_invoices) if Decimal(total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
+            total_tax_collected = Decimal(total_tax_invoices) if Decimal(
+                total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
 
             tax_details = []
 
             if total_tax_items and total_tax_items != Decimal('0.00'):
                 # Sum amounts by gst_category and ensure GST/VAT/Service Tax entries are always present
-                grouped = items_qs.values('gst_category').annotate(amount=Sum('tax'))
+                grouped = items_qs.values(
+                    'gst_category').annotate(amount=Sum('tax'))
                 gst_amt = Decimal('0.00')
                 vat_amt = Decimal('0.00')
                 service_amt = Decimal('0.00')
@@ -3716,12 +3765,14 @@ class TaxOnSalesReportView(APIView):
                     covered_amount += amt
 
                     if rate is None:
-                        other_entries.append({"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
+                        other_entries.append(
+                            {"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
                     else:
                         try:
                             r = Decimal(rate)
                         except Exception:
-                            other_entries.append({"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
+                            other_entries.append(
+                                {"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
                             continue
 
                         if r == Decimal('5'):
@@ -3731,27 +3782,36 @@ class TaxOnSalesReportView(APIView):
                         elif r == Decimal('2'):
                             service_amt += amt
                         else:
-                            other_entries.append({"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
+                            other_entries.append(
+                                {"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
 
                 # Always include GST, VAT, Service Tax entries (may be zero)
-                tax_details.append({"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
-                tax_details.append({"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
-                tax_details.append({"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
+                tax_details.append(
+                    {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
+                tax_details.append(
+                    {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
+                tax_details.append(
+                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
 
                 # Append other discovered rates
                 for e in other_entries:
                     tax_details.append(e)
 
                 # If invoice-level tax exists beyond item-level tax, include it separately
-                invoice_level_extra = Decimal(total_tax_invoices) - covered_amount
+                invoice_level_extra = Decimal(
+                    total_tax_invoices) - covered_amount
                 if invoice_level_extra and invoice_level_extra > Decimal('0.00'):
-                    tax_details.append({"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
+                    tax_details.append(
+                        {"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
 
             else:
                 # Fallback: estimate by applying fixed rates to revenue
-                gst_amt = (Decimal(total_revenue) * Decimal('0.05')).quantize(Decimal('0.01'))
-                vat_amt = (Decimal(total_revenue) * Decimal('0.10')).quantize(Decimal('0.01'))
-                service_amt = (Decimal(total_revenue) * Decimal('0.02')).quantize(Decimal('0.01'))
+                gst_amt = (Decimal(total_revenue) * Decimal('0.05')
+                           ).quantize(Decimal('0.01'))
+                vat_amt = (Decimal(total_revenue) * Decimal('0.10')
+                           ).quantize(Decimal('0.01'))
+                service_amt = (Decimal(total_revenue) *
+                               Decimal('0.02')).quantize(Decimal('0.01'))
                 estimated_sum = gst_amt + vat_amt + service_amt
                 other_amt = Decimal('0.00')
                 if total_tax_collected and total_tax_collected > estimated_sum:
@@ -3760,10 +3820,12 @@ class TaxOnSalesReportView(APIView):
                 tax_details = [
                     {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"},
                     {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"},
-                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"},
+                    {"name": "Service Tax", "rate": "2%",
+                        "amount": f"{service_amt:.2f}"},
                 ]
                 if other_amt > 0:
-                    tax_details.append({"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
+                    tax_details.append(
+                        {"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
 
             response = {
                 "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
@@ -3777,7 +3839,8 @@ class TaxOnSalesReportView(APIView):
                     try:
                         start_dt = datetime.fromisoformat(start_date).date()
                     except Exception:
-                        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+                        start_dt = datetime.strptime(
+                            start_date, "%Y-%m-%d").date()
                     try:
                         end_dt = datetime.fromisoformat(end_date).date()
                     except Exception:
@@ -3788,23 +3851,27 @@ class TaxOnSalesReportView(APIView):
                     end_dt = now.replace(month=12, day=31)
 
                 # Aggregate invoice-level tax per month
-                invoice_months = sales_qs.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('tax'))
+                invoice_months = sales_qs.annotate(month=TruncMonth(
+                    'issue_date')).values('month').annotate(total=Sum('tax'))
                 invoice_map = {}
                 for im in invoice_months:
                     m = im.get('month')
                     if m:
                         # normalize month key to a date (first day of month)
                         key = m.date() if hasattr(m, 'date') else m
-                        invoice_map[key] = Decimal(im.get('total') or Decimal('0.00'))
+                        invoice_map[key] = Decimal(
+                            im.get('total') or Decimal('0.00'))
 
                 # Aggregate item-level tax per month (by invoice issue_date)
-                items_months = items_qs.annotate(month=TruncMonth('invoice__issue_date')).values('month').annotate(total=Sum('tax'))
+                items_months = items_qs.annotate(month=TruncMonth(
+                    'invoice__issue_date')).values('month').annotate(total=Sum('tax'))
                 items_map = {}
                 for it in items_months:
                     m = it.get('month')
                     if m:
                         key = m.date() if hasattr(m, 'date') else m
-                        items_map[key] = Decimal(it.get('total') or Decimal('0.00'))
+                        items_map[key] = Decimal(
+                            it.get('total') or Decimal('0.00'))
 
                 # Build month list from start_dt to end_dt
                 chart_data = []
@@ -3814,8 +3881,10 @@ class TaxOnSalesReportView(APIView):
                     inv_amt = invoice_map.get(month_start, Decimal('0.00'))
                     item_amt = items_map.get(month_start, Decimal('0.00'))
                     # Prefer invoice-level tax when present (non-zero)
-                    month_amt = inv_amt if inv_amt and inv_amt != Decimal('0.00') else item_amt
-                    chart_data.append({"month": month_start.strftime('%b'), "amount": f"{month_amt:.2f}"})
+                    month_amt = inv_amt if inv_amt and inv_amt != Decimal(
+                        '0.00') else item_amt
+                    chart_data.append({"month": month_start.strftime(
+                        '%b'), "amount": f"{month_amt:.2f}"})
                     # increment month
                     if cur.month == 12:
                         cur = cur.replace(year=cur.year + 1, month=1)
@@ -3828,7 +3897,7 @@ class TaxOnSalesReportView(APIView):
 
                 response['chart_months'] = chart_months
                 response['chart_amounts'] = chart_amounts
-            
+
             except Exception:
                 response['chart_data'] = []
 
@@ -3848,26 +3917,33 @@ class TaxOnPurchaseReportView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
 
-            sales_qs = products_models.Invoice.objects.filter(user=user, invoice_type='purchase', status__iexact='Paid', is_deleted=False)
+            sales_qs = products_models.Invoice.objects.filter(
+                user=user, invoice_type='purchase', status__iexact='Paid', is_deleted=False)
             if start_date:
                 sales_qs = sales_qs.filter(issue_date__gte=start_date)
             if end_date:
                 sales_qs = sales_qs.filter(issue_date__lte=end_date)
 
-            total_tax_invoices = sales_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
-            total_revenue = sales_qs.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+            total_tax_invoices = sales_qs.aggregate(
+                total=Sum('tax'))['total'] or Decimal('0.00')
+            total_revenue = sales_qs.aggregate(total=Sum('total'))[
+                'total'] or Decimal('0.00')
 
-            items_qs = products_models.InvoiceItems.objects.filter(invoice__in=sales_qs)
-            total_tax_items = items_qs.aggregate(total=Sum('tax'))['total'] or Decimal('0.00')
+            items_qs = products_models.InvoiceItems.objects.filter(
+                invoice__in=sales_qs)
+            total_tax_items = items_qs.aggregate(total=Sum('tax'))[
+                'total'] or Decimal('0.00')
 
             # Determine total tax collected (prefer invoice.tax if present)
-            total_tax_collected = Decimal(total_tax_invoices) if Decimal(total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
+            total_tax_collected = Decimal(total_tax_invoices) if Decimal(
+                total_tax_invoices) != Decimal('0.00') else Decimal(total_tax_items)
 
             tax_details = []
 
             if total_tax_items and total_tax_items != Decimal('0.00'):
                 # Sum amounts by gst_category and ensure GST/VAT/Service Tax entries are always present
-                grouped = items_qs.values('gst_category').annotate(amount=Sum('tax'))
+                grouped = items_qs.values(
+                    'gst_category').annotate(amount=Sum('tax'))
                 gst_amt = Decimal('0.00')
                 vat_amt = Decimal('0.00')
                 service_amt = Decimal('0.00')
@@ -3883,12 +3959,14 @@ class TaxOnPurchaseReportView(APIView):
                     covered_amount += amt
 
                     if rate is None:
-                        other_entries.append({"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
+                        other_entries.append(
+                            {"name": "Other Tax", "rate": "", "amount": f"{amt:.2f}"})
                     else:
                         try:
                             r = Decimal(rate)
                         except Exception:
-                            other_entries.append({"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
+                            other_entries.append(
+                                {"name": f"Tax @ {rate}", "rate": str(rate), "amount": f"{amt:.2f}"})
                             continue
 
                         if r == Decimal('5'):
@@ -3898,27 +3976,36 @@ class TaxOnPurchaseReportView(APIView):
                         elif r == Decimal('2'):
                             service_amt += amt
                         else:
-                            other_entries.append({"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
+                            other_entries.append(
+                                {"name": f"Other Tax", "rate": "-", "amount": f"{amt:.2f}"})
 
                 # Always include GST, VAT, Service Tax entries (may be zero)
-                tax_details.append({"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
-                tax_details.append({"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
-                tax_details.append({"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
+                tax_details.append(
+                    {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"})
+                tax_details.append(
+                    {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"})
+                tax_details.append(
+                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"})
 
                 # Append other discovered rates
                 for e in other_entries:
                     tax_details.append(e)
 
                 # If invoice-level tax exists beyond item-level tax, include it separately
-                invoice_level_extra = Decimal(total_tax_invoices) - covered_amount
+                invoice_level_extra = Decimal(
+                    total_tax_invoices) - covered_amount
                 if invoice_level_extra and invoice_level_extra > Decimal('0.00'):
-                    tax_details.append({"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
+                    tax_details.append(
+                        {"name": "Invoice-level Tax", "rate": "", "amount": f"{invoice_level_extra:.2f}"})
 
             else:
                 # Fallback: estimate by applying fixed rates to revenue
-                gst_amt = (Decimal(total_revenue) * Decimal('0.05')).quantize(Decimal('0.01'))
-                vat_amt = (Decimal(total_revenue) * Decimal('0.10')).quantize(Decimal('0.01'))
-                service_amt = (Decimal(total_revenue) * Decimal('0.02')).quantize(Decimal('0.01'))
+                gst_amt = (Decimal(total_revenue) * Decimal('0.05')
+                           ).quantize(Decimal('0.01'))
+                vat_amt = (Decimal(total_revenue) * Decimal('0.10')
+                           ).quantize(Decimal('0.01'))
+                service_amt = (Decimal(total_revenue) *
+                               Decimal('0.02')).quantize(Decimal('0.01'))
                 estimated_sum = gst_amt + vat_amt + service_amt
                 other_amt = Decimal('0.00')
                 if total_tax_collected and total_tax_collected > estimated_sum:
@@ -3927,10 +4014,12 @@ class TaxOnPurchaseReportView(APIView):
                 tax_details = [
                     {"name": "GST", "rate": "5%", "amount": f"{gst_amt:.2f}"},
                     {"name": "VAT", "rate": "10%", "amount": f"{vat_amt:.2f}"},
-                    {"name": "Service Tax", "rate": "2%", "amount": f"{service_amt:.2f}"},
+                    {"name": "Service Tax", "rate": "2%",
+                        "amount": f"{service_amt:.2f}"},
                 ]
                 if other_amt > 0:
-                    tax_details.append({"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
+                    tax_details.append(
+                        {"name": "Other Tax", "rate": "", "amount": f"{other_amt:.2f}"})
 
             response = {
                 "total_tax_collected": f"{Decimal(total_tax_collected):.2f}",
@@ -3942,7 +4031,8 @@ class TaxOnPurchaseReportView(APIView):
                 # Determine date range for months
                 if start_date and end_date:
                     try:
-                        start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+                        start_dt = datetime.strptime(
+                            start_date, '%Y-%m-%d').date()
                     except Exception:
                         start_dt = None
                     try:
@@ -3959,24 +4049,28 @@ class TaxOnPurchaseReportView(APIView):
                     end_dt = now.replace(month=12, day=31)
 
                 # Aggregate invoice-level tax per month
-                invoice_months = sales_qs.annotate(month=TruncMonth('issue_date')).values('month').annotate(total=Sum('tax'))
+                invoice_months = sales_qs.annotate(month=TruncMonth(
+                    'issue_date')).values('month').annotate(total=Sum('tax'))
                 invoice_map = {}
                 for im in invoice_months:
                     m = im.get('month')
                     if m:
                         month_key = m.date() if hasattr(m, 'date') else m
                         month_key = month_key.replace(day=1)
-                        invoice_map[month_key] = Decimal(im.get('total') or Decimal('0.00'))
+                        invoice_map[month_key] = Decimal(
+                            im.get('total') or Decimal('0.00'))
 
                 # Aggregate item-level tax per month (by invoice issue_date)
-                items_months = items_qs.annotate(month=TruncMonth('invoice__issue_date')).values('month').annotate(total=Sum('tax'))
+                items_months = items_qs.annotate(month=TruncMonth(
+                    'invoice__issue_date')).values('month').annotate(total=Sum('tax'))
                 items_map = {}
                 for it in items_months:
                     m = it.get('month')
                     if m:
                         month_key = m.date() if hasattr(m, 'date') else m
                         month_key = month_key.replace(day=1)
-                        items_map[month_key] = Decimal(it.get('total') or Decimal('0.00'))
+                        items_map[month_key] = Decimal(
+                            it.get('total') or Decimal('0.00'))
 
                 # Build month list from start_dt to end_dt
                 chart_data = []
@@ -3986,8 +4080,10 @@ class TaxOnPurchaseReportView(APIView):
                     inv_amt = invoice_map.get(month_start, Decimal('0.00'))
                     item_amt = items_map.get(month_start, Decimal('0.00'))
                     # Prefer invoice-level tax when present (non-zero)
-                    month_amt = inv_amt if inv_amt and inv_amt != Decimal('0.00') else item_amt
-                    chart_data.append({"month": month_start.strftime('%b'), "amount": f"{month_amt:.2f}"})
+                    month_amt = inv_amt if inv_amt and inv_amt != Decimal(
+                        '0.00') else item_amt
+                    chart_data.append({"month": month_start.strftime(
+                        '%b'), "amount": f"{month_amt:.2f}"})
                     # increment month
                     if cur.month == 12:
                         cur = cur.replace(year=cur.year + 1, month=1)
@@ -4036,13 +4132,15 @@ class ExpenseByCategoryReportView(APIView):
             # collect amounts per category first
             cat_amounts = {}
             for cat in categories:
-                amt = qs.filter(category__iexact=cat).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                amt = qs.filter(category__iexact=cat).aggregate(
+                    total=Sum('amount'))['total'] or Decimal('0.00')
                 cat_amounts[cat] = Decimal(amt)
 
             total_expense = sum(cat_amounts.values(), Decimal('0.00'))
 
             # simple breakdown (category + amount)
-            breakdown = [{"category": cat, "amount": f"{cat_amounts[cat]:.2f}"} for cat in categories]
+            breakdown = [{"category": cat, "amount": f"{cat_amounts[cat]:.2f}"}
+                         for cat in categories]
 
             # new breakdown: category, percentage, amount
             breakdown_with_percentage = []
@@ -4085,8 +4183,8 @@ class ExpenseByDateReportView(APIView):
             if end_date:
                 qs = qs.filter(expense_date__lte=end_date)
 
-
-            total_expense = qs.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            total_expense = qs.aggregate(total=Sum('amount'))[
+                'total'] or Decimal('0.00')
 
             # current week breakdown (Monday -> Sunday)
             today = timezone.now().date()
@@ -4094,7 +4192,8 @@ class ExpenseByDateReportView(APIView):
             week_details = []
             for i in range(7):
                 d = week_start + timedelta(days=i)
-                amt = qs.filter(expense_date=d).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                amt = qs.filter(expense_date=d).aggregate(
+                    total=Sum('amount'))['total'] or Decimal('0.00')
                 week_details.append({
                     "date": d.isoformat(),
                     "day": d.strftime("%A"),
