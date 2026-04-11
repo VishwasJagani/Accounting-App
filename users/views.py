@@ -1,13 +1,13 @@
 # Django
 import os
+import calendar
 from decimal import Decimal
 from drf_yasg import openapi
-from django.db.models import Q, Sum, F, Count
-from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from datetime import timedelta, datetime
-import calendar
+from django.db.models import Q, Sum, F, Count
 from drf_yasg.utils import swagger_auto_schema
+from django.db.models.functions import TruncMonth
 from django.contrib.auth.hashers import check_password
 
 # Rest FrameWork
@@ -24,7 +24,6 @@ from products import models as products_models
 from products import serializer as products_serializer
 from base_files.base_permission import IsAuthenticated
 from base_files.base_pagination import CustomPagination
-from base_files.base_task import send_mail
 from admin_panel import models as admin_models
 
 
@@ -2233,7 +2232,8 @@ class ExpenseReportPage(APIView):
                 expense_date__year=year, expense_date__month=month)
             month_totals = month_qs.values(
                 'expense_date').annotate(total=Sum('amount'))
-            month_totals_map = {item['expense_date']                                : item['total'] for item in month_totals}
+            month_totals_map = {item['expense_date']
+                : item['total'] for item in month_totals}
 
             labels = []
             data = []
@@ -3455,7 +3455,7 @@ class ProfitAndLossReportView(APIView):
 
             net_profit = Decimal(gross_profit) - \
                 Decimal(total_operating_expense)
-            
+
             response = {
                 "income": {
                     'sales_income': f"{Decimal(sales_income):.2f}",
@@ -3688,6 +3688,12 @@ class BalanceSheetView(APIView):
             total_liabilities_and_equity = Decimal(accounts_payable) + Decimal(
                 short_term_debt) + Decimal(long_term_loans) + Decimal(total_equity)
 
+            # Adjust for rounding difference to balance the equation
+            rounding_difference = total_assets - total_liabilities_and_equity
+            retained_earnings += rounding_difference
+            total_equity += rounding_difference
+            total_liabilities_and_equity += rounding_difference
+
             data = {
                 'assets': {
                     'cash': f"{Decimal(cash):.2f}",
@@ -3703,6 +3709,7 @@ class BalanceSheetView(APIView):
                     'owners_capital': f"{Decimal(owners_capital):.2f}",
                     'retained_earnings': f"{Decimal(retained_earnings):.2f}",
                     'total_equity': f"{Decimal(total_equity):.2f}",
+                    'rounding_difference': f"{Decimal(rounding_difference):.2f}",
                     'total_liabilities_and_equity': f"{Decimal(total_liabilities_and_equity):.2f}",
                 }
             }
@@ -4226,13 +4233,40 @@ class GetPrivacyPolicyView(APIView):
 
 
 class GetFAQsView(APIView):
+    pagination_class = CustomPagination
 
     def get(self, request):
         try:
-            faqs = admin_models.FAQs.objects.first()
+            faqs = admin_models.FAQs.objects.filter(is_active=True)
             if not faqs:
                 return Response({"success": False, "message": "FAQs not found."}, status=status.HTTP_404_NOT_FOUND)
 
-            return Response({"success": True, "message": "FAQs fetched.", "data": faqs.faqs}, status=status.HTTP_200_OK)
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(faqs, request)
+
+            serializer = users_serializer.FAQsSerializer(
+                result_page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SendInquiryView(APIView):
+
+    def post(self, request):
+        try:
+            topic = request.data.get('topic')
+            subject = request.data.get('subject')
+            message = request.data.get('message')
+
+            if not topic or not subject or not message:
+                return Response({"success": False, "message": "Topic, subject, and message are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            inquiry = admin_models.Inquiry.objects.create(
+                topic=topic, subject=subject, message=message)
+
+            return Response({"success": True, "message": "Inquiry sent successfully."}, status=status.HTTP_201_CREATED)
+
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

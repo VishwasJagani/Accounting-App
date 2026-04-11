@@ -6,6 +6,7 @@ from django.contrib.auth.hashers import make_password
 
 # Local
 from users import models as users_models
+from admin_panel import models as admin_panel_models
 
 
 class RoleSerializer(serializers.ModelSerializer):
@@ -110,3 +111,9 @@ class UserExpenseSerializer(serializers.ModelSerializer):
         model = users_models.UserExpense
         fields = ['id', 'user', 'expense_name', 'amount', 'category',
                   'expense_date', 'description']
+
+
+class FAQsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = admin_panel_models.FAQs
+        fields = ['id', 'question', 'answer']

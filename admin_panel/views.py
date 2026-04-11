@@ -18,6 +18,7 @@ from users import utils as users_utils
 from users import models as users_models
 from users import serializer as users_serializer
 from admin_panel import serializer as admin_serializer
+from admin_panel import models as admin_panel_models
 
 
 class AdminRegisterView(APIView):
@@ -514,6 +515,537 @@ class UserDetailView(APIView):
             user_obj.delete()
 
             return Response({"success": True, "message": "User deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FAQsListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = admin_serializer.FAQSerializer
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        faqs = admin_panel_models.FAQs.objects.filter(
+            is_deleted=False).order_by('-created_at')
+        serializer = self.serializer_class(faqs, many=True)
+        return serializer.data
+
+
+class AddFAQsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            question = data.get('question')
+            answer = data.get('answer')
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(question):
+                return Response({"success": False, "message": "Question is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(answer):
+                return Response({"success": False, "message": "Answer is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            serializer = admin_serializer.FAQSerializer(data=data)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "FAQ added successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FAQDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, faq_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(faq_id):
+                return Response({"success": False, "message": "FAQ Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            faq_obj = admin_panel_models.FAQs.objects.filter(
+                id=faq_id, is_deleted=False).first()
+
+            if not faq_obj:
+                return Response({"success": False, "message": "FAQ not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.FAQSerializer(faq_obj).data
+            return Response({"success": True, "message": "FAQ Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, faq_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(faq_id):
+                return Response({"success": False, "message": "FAQ Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            faq_obj = admin_panel_models.FAQs.objects.filter(
+                id=faq_id, is_deleted=False).first()
+
+            if not faq_obj:
+                return Response({"success": False, "message": "FAQ not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.FAQSerializer(
+                instance=faq_obj, data=request.data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "FAQ updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, faq_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(faq_id):
+                return Response({"success": False, "message": "FAQ Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            faq_obj = admin_panel_models.FAQs.objects.filter(
+                id=faq_id, is_deleted=False).first()
+
+            if not faq_obj:
+                return Response({"success": False, "message": "FAQ not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            faq_obj.delete()
+
+            return Response({"success": True, "message": "FAQ deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddTermsAndConditionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            content = data.get('content')
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(content):
+                return Response({"success": False, "message": "Content is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            serializer = admin_serializer.TermsAndConditionsSerializer(
+                data=data)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Terms and Conditions added successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetTermsAndConditionsView(APIView):
+
+    def get(self, request):
+        try:
+            terms_and_conditions_obj = admin_panel_models.TermsAndConditions.objects.first()
+
+            if not terms_and_conditions_obj:
+                return Response({"success": False, "message": "Terms and Conditions not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.TermsAndConditionsSerializer(
+                terms_and_conditions_obj).data
+            return Response({"success": True, "message": "Terms and Conditions Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TermsAndConditionsDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, terms_and_conditions_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(terms_and_conditions_id):
+                return Response({"success": False, "message": "Terms and Conditions Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            terms_and_conditions_obj = admin_panel_models.TermsAndConditions.objects.filter(
+                id=terms_and_conditions_id).first()
+
+            if not terms_and_conditions_obj:
+                return Response({"success": False, "message": "Terms and Conditions not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.TermsAndConditionsSerializer(
+                terms_and_conditions_obj).data
+
+            return Response({"success": True, "message": "Terms and Conditions Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, terms_and_conditions_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(terms_and_conditions_id):
+                return Response({"success": False, "message": "Terms and Conditions Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            terms_and_conditions_obj = admin_panel_models.TermsAndConditions.objects.filter(
+                id=terms_and_conditions_id).first()
+
+            if not terms_and_conditions_obj:
+                return Response({"success": False, "message": "Terms and Conditions not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.TermsAndConditionsSerializer(
+                instance=terms_and_conditions_obj, data=request.data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Terms and Conditions updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, terms_and_conditions_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(terms_and_conditions_id):
+                return Response({"success": False, "message": "Terms and Conditions Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            terms_and_conditions_obj = admin_panel_models.TermsAndConditions.objects.filter(
+                id=terms_and_conditions_id).first()
+
+            if not terms_and_conditions_obj:
+                return Response({"success": False, "message": "Terms and Conditions not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            terms_and_conditions_obj.delete()
+
+            return Response({"success": True, "message": "Terms and Conditions deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddContactUsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            name = data.get('name')
+            email = data.get('email')
+            country_code = data.get('country_code')
+            phone_number = data.get('phone_number')
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(name):
+                return Response({"success": False, "message": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(email):
+                return Response({"success": False, "message": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(country_code):
+                return Response({"success": False, "message": "Country code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_utils.is_required(phone_number):
+                return Response({"success": False, "message": "Phone number is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            serializer = admin_serializer.ContactUsSerializer(data=data)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Contact Us information added successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetContactUsView(APIView):
+
+    def get(self, request):
+        try:
+            contact_us_obj = admin_panel_models.ContactUs.objects.first()
+
+            if not contact_us_obj:
+                return Response({"success": False, "message": "Contact Us information not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.ContactUsSerializer(
+                contact_us_obj).data
+            return Response({"success": True, "message": "Contact Us Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ContactUsDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, contact_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(contact_us_id):
+                return Response({"success": False, "message": "Contact Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            contact_us_obj = admin_panel_models.ContactUs.objects.filter(
+                id=contact_us_id).first()
+
+            if not contact_us_obj:
+                return Response({"success": False, "message": "Contact Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.ContactUsSerializer(
+                contact_us_obj).data
+
+            return Response({"success": True, "message": "Contact Us Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, contact_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(contact_us_id):
+                return Response({"success": False, "message": "Contact Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            contact_us_obj = admin_panel_models.ContactUs.objects.filter(
+                id=contact_us_id).first()
+
+            if not contact_us_obj:
+                return Response({"success": False, "message": "Contact Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.ContactUsSerializer(
+                instance=contact_us_obj, data=request.data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Contact Us updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, contact_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(contact_us_id):
+                return Response({"success": False, "message": "Contact Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            contact_us_obj = admin_panel_models.ContactUs.objects.filter(
+                id=contact_us_id).first()
+
+            if not contact_us_obj:
+                return Response({"success": False, "message": "Contact Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            contact_us_obj.delete()
+
+            return Response({"success": True, "message": "Contact Us deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InquiryListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = admin_serializer.InquirySerializer
+    pagination_class = CustomPagination
+
+    def get_queryset(self):
+        inquiries = admin_panel_models.Inquiry.objects.all().order_by('-created_at')
+
+        return inquiries
+
+    def list(self, request):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            queryset = self.get_queryset()
+            paginator = self.pagination_class()
+            result_page = paginator.paginate_queryset(queryset, request)
+            serializer = self.serializer_class(result_page, many=True)
+
+            return paginator.get_paginated_response(serializer.data)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddAboutUsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+            content = data.get('content')
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(content):
+                return Response({"success": False, "message": "Content is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            serializer = admin_serializer.AboutUsSerializer(
+                data=data)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "About Us added successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetAboutUsView(APIView):
+
+    def get(self, request):
+        try:
+            about_us_obj = admin_panel_models.AboutUs.objects.first()
+
+            if not about_us_obj:
+                return Response({"success": False, "message": "About Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.AboutUsSerializer(
+                about_us_obj).data
+            return Response({"success": True, "message": "About Us Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AboutUsDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, about_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(about_us_id):
+                return Response({"success": False, "message": "About Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            about_us_obj = admin_panel_models.AboutUs.objects.filter(
+                id=about_us_id).first()
+
+            if not about_us_obj:
+                return Response({"success": False, "message": "About Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.AboutUsSerializer(
+                about_us_obj).data
+
+            return Response({"success": True, "message": "About Us Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, about_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(about_us_id):
+                return Response({"success": False, "message": "About Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            about_us_obj = admin_panel_models.AboutUs.objects.filter(
+                id=about_us_id).first()
+
+            if not about_us_obj:
+                return Response({"success": False, "message": "About Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = admin_serializer.AboutUsSerializer(
+                instance=about_us_obj, data=request.data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "About Us updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, about_us_id):
+        try:
+            user = request.user
+
+            if not user.user_role.role_name == "admin":
+                return Response({"success": False, "message": "Only Admins Are Allowed."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if users_utils.is_required(about_us_id):
+                return Response({"success": False, "message": "About Us Id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            about_us_obj = admin_panel_models.AboutUs.objects.filter(
+                id=about_us_id).first()
+
+            if not about_us_obj:
+                return Response({"success": False, "message": "About Us not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            about_us_obj.delete()
+
+            return Response({"success": True, "message": "About Us deleted successfully."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

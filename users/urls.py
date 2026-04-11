@@ -87,5 +87,7 @@ urlpatterns = [
          name="privacy-policy"),
     path('faqs/', users_views.GetFAQsView.as_view(),
          name="faqs"),
+    path('inquiries/', users_views.SendInquiryView.as_view(),
+         name="inquiries"),
 
 ]
