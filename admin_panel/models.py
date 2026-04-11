@@ -29,7 +29,7 @@ class FAQs(BaseModel):
         db_table = "faqs"
 
     def __str__(self):
-        return self.faqs[:10] + "..." if len(self.faqs) > 20 else self.faqs
+        return self.question
 
 
 class TermsAndConditions(BaseModel):
