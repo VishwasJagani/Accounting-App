@@ -195,3 +195,95 @@ class UserExpense(BaseModel):
 
     def __str__(self):
         return f"{self.user.fullname} - {self.amount}"
+
+
+class UserBankAccount(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name='user_bank_account', blank=True, null=True)
+    account_name = models.CharField(max_length=255, blank=True, null=True)
+    account_number = models.CharField(max_length=255, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=255, blank=True, null=True)
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    account_type = models.CharField(max_length=50, blank=True, null=True)
+    opening_balance = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
+    current_balance = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
+    statement = models.FileField(
+        upload_to="bank_statements/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "User Bank Account"
+        verbose_name_plural = "User Bank Accounts"
+        db_table = "UserBankAccounts"
+
+    def __str__(self):
+        return f"{self.user.fullname} - {self.bank_name}"
+
+    def save(self, *args, **kwargs):
+        try:
+            if self.pk:
+                old_account = UserBankAccount.objects.filter(
+                    pk=self.pk).first()
+                if old_account and old_account.statement and old_account.statement != self.statement:
+                    if os.path.isfile(old_account.statement.path):
+                        os.remove(old_account.statement.path)
+        except Exception as e:
+            pass
+
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        try:
+            if self.statement and os.path.isfile(self.statement.path):
+                os.remove(self.statement.path)
+        except Exception as e:
+            pass
+
+        super().delete(*args, **kwargs)
+
+
+class TransactionModel(BaseModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name='transaction_user', blank=True, null=True)
+    transaction_type = models.CharField(max_length=50, blank=True, null=True)
+    amount = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True)
+    category = models.CharField(max_length=100, blank=True, null=True)
+    bank = models.ForeignKey(UserBankAccount, on_delete=models.CASCADE,
+                             related_name='transaction_bank', blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    receipt = models.FileField(upload_to="transaction_receipts/",
+                               blank=True, null=True)
+    date = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Transaction"
+        verbose_name_plural = "Transactions"
+        db_table = "Transactions"
+
+    def __str__(self):
+        return f"{self.user.fullname} - {self.amount} - {self.transaction_type}"
+
+    def save(self, *args, **kwargs):
+        try:
+            if self.pk:
+                old_transaction = TransactionModel.objects.filter(
+                    pk=self.pk).first()
+                if old_transaction and old_transaction.receipt and old_transaction.receipt != self.receipt:
+                    if os.path.isfile(old_transaction.receipt.path):
+                        os.remove(old_transaction.receipt.path)
+        except Exception as e:
+            pass
+
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        try:
+            if self.receipt and os.path.isfile(self.receipt.path):
+                os.remove(self.receipt.path)
+        except Exception as e:
+            pass
+
+        super().delete(*args, **kwargs)

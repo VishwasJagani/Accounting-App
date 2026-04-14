@@ -166,7 +166,8 @@ class RegisterView(APIView):
             if users_models.User.objects.filter(email=email, is_active=True, is_deleted=False).exists():
                 return Response({"success": False, "message": "Email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
-            data['user_role'] = 2
+            data['user_role'] = users_models.RoleModel.objects.filter(
+                role_name="user").first().role_id
             data['last_login'] = timezone.now()
             serializer = users_serializer.UserSerializer(data=data)
 
@@ -4267,6 +4268,220 @@ class SendInquiryView(APIView):
                 topic=topic, subject=subject, message=message)
 
             return Response({"success": True, "message": "Inquiry sent successfully."}, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddBankAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.UserBankAccountSerializer
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data
+
+            account_name = data.get('account_name')
+            account_number = data.get('account_number')
+            ifsc_code = data.get('ifsc_code')
+            bank_name = data.get('bank_name')
+            account_type = data.get('account_type')
+            opening_balance = data.get('opening_balance')
+
+            if users_utils.is_required(account_name):
+                return Response({"success": False, "message": "Account name is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(account_number):
+                return Response({"success": False, "message": "Account number is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(ifsc_code):
+                return Response({"success": False, "message": "IFSC code is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(bank_name):
+                return Response({"success": False, "message": "Bank name is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(account_type):
+                return Response({"success": False, "message": "Account type is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(opening_balance):
+                return Response({"success": False, "message": "Opening balance is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not account_number.isdigit():
+                return Response({"success": False, "message": "Account number must be numeric."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if users_models.UserBankAccount.objects.filter(account_number=account_number, bank_name=data.get('bank_name'), is_deleted=False, is_active=True).exists():
+                return Response({"success": False, "message": "Account number must be unique. This account number already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['current_balance'] = opening_balance
+            serializer = self.serializer_class(data=data)
+            if serializer.is_valid():
+                serializer.save(user=user)
+                return Response({"success": True, "message": "Bank account added successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
+
+            return Response({"success": False, "message": "Invalid data.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BankAccountDetailsView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.UserBankAccountSerializer
+
+    def get(self, request, account_id):
+        try:
+            user = request.user
+            try:
+                account = users_models.UserBankAccount.objects.get(
+                    id=account_id, user=user, is_deleted=False)
+            except users_models.UserBankAccount.DoesNotExist:
+                return Response({"success": False, "message": "Bank account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = self.serializer_class(account)
+            return Response({"success": True, "message": "Bank account details fetched.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, account_id):
+        try:
+            user = request.user
+            data = request.data
+
+            try:
+                account = users_models.UserBankAccount.objects.get(
+                    id=account_id, user=user, is_deleted=False)
+            except users_models.UserBankAccount.DoesNotExist:
+                return Response({"success": False, "message": "Bank account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            if 'account_number' in data:
+                account_number = data.get('account_number')
+                if not account_number.isdigit():
+                    return Response({"success": False, "message": "Account number must be numeric."}, status=status.HTTP_400_BAD_REQUEST)
+                if users_models.UserBankAccount.objects.filter(account_number=account_number, bank_name=data.get('bank_name', account.bank_name), is_deleted=False, is_active=True).exclude(id=account_id).exists():
+                    return Response({"success": False, "message": "Account number must be unique. This account number already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+            serializer = self.serializer_class(
+                account, data=data, partial=True)
+
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"success": True, "message": "Bank account updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+            return Response({"success": False, "message": "Invalid data.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, account_id):
+        try:
+            user = request.user
+            try:
+                account = users_models.UserBankAccount.objects.get(
+                    id=account_id, user=user, is_deleted=False)
+            except users_models.UserBankAccount.DoesNotExist:
+                return Response({"success": False, "message": "Bank account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            account.delete()
+
+            return Response({"success": True, "message": "Bank account deleted successfully."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MyWalletView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            bank_account = users_models.UserBankAccount.objects.filter(
+                user=user, is_deleted=False)
+
+            total_balance = Decimal('0.00')
+            accounts_data = []
+
+            for account in bank_account:
+
+                accounts_data.append({
+                    "account_id": account.id,
+                    "account_name": account.account_name,
+                    "bank_name": account.bank_name,
+                    "account_number": account.account_number,
+                    "account_type": account.account_type,
+                    "balance": account.current_balance,
+                })
+
+                total_balance += account.current_balance if account.current_balance else Decimal(
+                    '0.00')
+
+            response = {
+                "total_balance": f"{total_balance:.2f}",
+                "accounts": accounts_data
+            }
+
+            return Response({"success": True, "message": "Wallet details fetched.", "data": response}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AddTransactionView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.TransactionModelSerializer
+
+    def post(self, request):
+        try:
+            user = request.user
+            data = request.data.copy()
+
+            bank_id = data.get('bank_id')
+            transaction_type = data.get('transaction_type')
+            amount = data.get('amount')
+
+            if users_utils.is_required(bank_id):
+                return Response({"success": False, "message": "Account ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(transaction_type):
+                return Response({"success": False, "message": "Transaction type is required."}, status=status.HTTP_400_BAD_REQUEST)
+            if users_utils.is_required(amount):
+                return Response({"success": False, "message": "Amount is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                amount = Decimal(amount)
+            except (ValueError, TypeError):
+                return Response({"success": False, "message": "Invalid amount format."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                account = users_models.UserBankAccount.objects.get(
+                    id=bank_id, user=user, is_deleted=False)
+            except users_models.UserBankAccount.DoesNotExist:
+                return Response({"success": False, "message": "Bank account not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            if transaction_type not in ['income', 'expense', 'transfer']:
+                return Response({"success": False, "message": "Transaction type must be either 'income', 'expense', or 'transfer'."}, status=status.HTTP_400_BAD_REQUEST)
+
+            data['bank'] = account.id
+            serializer = self.serializer_class(data=data)
+            if serializer.is_valid():
+                obj = users_models.TransactionModel(
+                    user=user,
+                    bank=account,
+                    transaction_type=transaction_type,
+                    amount=amount,
+                    category=data.get('category'),
+                    description=data.get('description'),
+                    receipt=data.get('receipt'),
+                    date=data.get('date')
+                )
+
+                try:
+                    users_utils.update_bank_account_balance(obj)
+                except ValueError as e:
+                    return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+                obj.save()
+                serializer = self.serializer_class(obj)
+                return Response({"success": True, "message": "Transaction added successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
+
+            return Response({"success": False, "message": "Invalid data.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

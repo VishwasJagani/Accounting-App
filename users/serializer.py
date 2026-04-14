@@ -117,3 +117,28 @@ class FAQsSerializer(serializers.ModelSerializer):
     class Meta:
         model = admin_panel_models.FAQs
         fields = ['id', 'question', 'answer']
+
+
+class UserBankAccountSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateTimeField(
+        format='%Y-%m-%d %H:%M:%S', read_only=True)
+    updated_at = serializers.DateTimeField(
+        format='%Y-%m-%d %H:%M:%S', read_only=True)
+    is_active = serializers.ReadOnlyField()
+
+    class Meta:
+        model = users_models.UserBankAccount
+        fields = '__all__'
+
+
+class TransactionModelSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateTimeField(
+        format='%Y-%m-%d %H:%M:%S', read_only=True)
+    updated_at = serializers.DateTimeField(
+        format='%Y-%m-%d %H:%M:%S', read_only=True)
+    date = serializers.DateTimeField(
+        format='%Y-%m-%d %H:%M:%S')
+
+    class Meta:
+        model = users_models.TransactionModel
+        fields = '__all__'

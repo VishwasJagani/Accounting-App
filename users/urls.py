@@ -90,4 +90,15 @@ urlpatterns = [
     path('inquiries/', users_views.SendInquiryView.as_view(),
          name="inquiries"),
 
+    path('bank-account/', include([
+         path('add/', users_views.AddBankAccountView.as_view(),
+              name='add-bank-account'),
+         path('details/<int:account_id>/', users_views.BankAccountDetailsView.as_view(),
+              name='bank-account-details'),
+         path('add-transaction/', users_views.AddTransactionView.as_view(),
+              name='add-transaction'),
+         ])),
+
+    path('wallet-balance/', users_views.MyWalletView.as_view(), name='wallet'),
+
 ]

@@ -80,3 +80,24 @@ class UserExpenseAdmin(admin.ModelAdmin):
 
 
 admin.site.register(users_models.UserExpense, UserExpenseAdmin)
+
+
+class UserBankAccountAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'bank_name', 'account_number')
+    search_fields = ('user__email', 'user__fullname')
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 15
+
+
+admin.site.register(users_models.UserBankAccount, UserBankAccountAdmin)
+
+
+class TransactionModelAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user', 'amount',
+                    'transaction_type', 'date')
+    search_fields = ('user__email', 'user__fullname')
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 15
+
+
+admin.site.register(users_models.TransactionModel, TransactionModelAdmin)
