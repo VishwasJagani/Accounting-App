@@ -960,12 +960,17 @@ class GetAboutUsView(APIView):
     def get(self, request):
         try:
             about_us_obj = admin_panel_models.AboutUs.objects.first()
+            contact_us = admin_panel_models.ContactUs.objects.first()
 
             if not about_us_obj:
                 return Response({"success": False, "message": "About Us not found"}, status=status.HTTP_404_NOT_FOUND)
 
             serializer = admin_serializer.AboutUsSerializer(
                 about_us_obj).data
+            
+            contact_us_serializer = admin_serializer.ContactUsSerializer(contact_us).data if contact_us else None
+            serializer['contact_us'] = contact_us_serializer
+
             return Response({"success": True, "message": "About Us Data Is Fetched", "data": serializer}, status=status.HTTP_200_OK)
 
         except Exception as e:
