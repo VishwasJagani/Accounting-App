@@ -2233,8 +2233,7 @@ class ExpenseReportPage(APIView):
                 expense_date__year=year, expense_date__month=month)
             month_totals = month_qs.values(
                 'expense_date').annotate(total=Sum('amount'))
-            month_totals_map = {item['expense_date']
-                : item['total'] for item in month_totals}
+            month_totals_map = {item['expense_date']                                : item['total'] for item in month_totals}
 
             labels = []
             data = []
@@ -4482,6 +4481,32 @@ class AddTransactionView(APIView):
                 return Response({"success": True, "message": "Transaction added successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
 
             return Response({"success": False, "message": "Invalid data.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetAllTransactionView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = users_serializer.TransactionModelSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        try:
+            user = request.user
+
+            transactions = users_models.TransactionModel.objects.filter(
+                user=user).order_by('-date')
+
+            if transactions:
+                paginator = self.pagination_class()
+                result_page = paginator.paginate_queryset(
+                    transactions, request)
+                serializer = self.serializer_class(result_page, many=True)
+
+                return paginator.get_paginated_response(serializer.data)
+
+            return Response({"success": True, "message": "No transactions found."}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

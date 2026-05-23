@@ -97,6 +97,8 @@ urlpatterns = [
               name='bank-account-details'),
          path('add-transaction/', users_views.AddTransactionView.as_view(),
               name='add-transaction'),
+         path('transactions/', users_views.GetAllTransactionView.as_view(),
+              name='all-transactions'),
          ])),
 
     path('wallet-balance/', users_views.MyWalletView.as_view(), name='wallet'),
