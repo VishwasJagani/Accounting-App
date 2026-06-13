@@ -4279,7 +4279,7 @@ class AddBankAccountView(APIView):
     def post(self, request):
         try:
             user = request.user
-            data = request.data
+            data = request.data.copy()
 
             account_name = data.get('account_name')
             account_number = data.get('account_number')
@@ -4494,9 +4494,14 @@ class GetAllTransactionView(APIView):
     def get(self, request):
         try:
             user = request.user
-
-            transactions = users_models.TransactionModel.objects.filter(
-                user=user).order_by('-date')
+            bank_id = request.query_params.get('bank_id')
+            
+            if bank_id:
+                transactions = users_models.TransactionModel.objects.filter(
+                    user=user, bank=bank_id).order_by('-date')
+            else:
+                transactions = users_models.TransactionModel.objects.filter(
+                    user=user).order_by('-date')
 
             if transactions:
                 paginator = self.pagination_class()
